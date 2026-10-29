@@ -1,0 +1,47 @@
+{
+    "name": "kekspuh",
+    "build": {
+        "dockerfile": "dockerfile"
+    },
+    "runArgs": [
+        "--hostname=kekspuh"
+    ],
+    "features": {
+        "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}
+    },
+    "remoteUser": "vscode",
+    "containerUser": "vscode",
+    "containerEnv": {
+        "PIP_REQUIRE_VIRTUALENV": "true",
+        "UV_PROJECT_ENVIRONMENT": "./.venv"
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "zsh",
+                "python.defaultInterpreterPath": "./.venv/bin/python",
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit"
+                },
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                }
+            },
+            "extensions": [
+                "charliermarsh.ruff",
+                "humao.rest-client",
+                "mikestead.dotenv",
+                "ms-azuretools.vscode-containers",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-python.debugpy",
+                "redhat.vscode-yaml",
+                "tabbyml.vscode-tabby",
+                "tamasfe.even-better-toml"
+            ]
+        }
+    },
+    "mounts": [],
+    "postCreateCommand": "bash .devcontainer/post-create.sh"
+}
