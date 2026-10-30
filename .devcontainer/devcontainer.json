@@ -13,19 +13,24 @@
     "containerUser": "vscode",
     "containerEnv": {
         "PIP_REQUIRE_VIRTUALENV": "true",
-        "UV_PROJECT_ENVIRONMENT": "./.venv"
+        "UV_PROJECT_ENVIRONMENT": "/workspaces/kekspuh/.venv"
     },
     "customizations": {
         "vscode": {
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "zsh",
-                "python.defaultInterpreterPath": "./.venv/bin/python",
+                "python.defaultInterpreterPath": "/workspaces/kekspuh/.venv/bin",
                 "editor.formatOnSave": true,
                 "editor.codeActionsOnSave": {
                     "source.organizeImports": "explicit"
                 },
                 "[python]": {
-                    "editor.defaultFormatter": "charliermarsh.ruff"
+                    "editor.defaultFormatter": "charliermarsh.ruff",
+                    "editor.formatOnSave": true,
+                    "editor.codeActionsOnSave": {
+                        "source.fixAll.ruff": "explicit",
+                        "source.organizeImports.ruff": "explicit"
+                    }
                 }
             },
             "extensions": [
