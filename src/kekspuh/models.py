@@ -14,12 +14,12 @@ class JsonResultsEnvelope(TypedDict, total=False):
     track_brainz: str | None
     recording_brainz: str | None
     artist_name: str | None
-    artist_id: list[str] | None
+    artist_brainz: list[str] | None
     album_name: str | None
     release_brainz: str | None
     release_group_brainz: str | None
-    labels: str | None
-    label_ids: list[str] | None
+    labels: list[str] | None
+    label_brainz: list[str] | None
     release_date: str | None
     rotation_status: str | None
     is_local: str | None
@@ -50,12 +50,12 @@ class JsonResultsForDb:
     track_brainz: str | None
     recording_brainz: str | None
     artist_name: str | None
-    artist_id: list[str] | None
+    artist_brainz: str | None
     album_name: str | None
     release_brainz: str | None
     release_group_brainz: str | None
-    labels: str | None
-    label_ids: list[str] | None
+    label: str | None
+    label_brainz: str | None
     release_date: str | None
     rotation_status: str | None
     is_local: str | None
@@ -65,4 +65,4 @@ class JsonResultsForDb:
     location: str | None
     location_name: str | None
     play_type: str | None
-    json_results_raw: str | None
+    raw_json: str | None
