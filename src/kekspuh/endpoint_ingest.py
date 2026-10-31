@@ -21,7 +21,7 @@ from kekspuh.models import JsonFromKexp, JsonResultsEnvelope, JsonResultsForDb
 def main() -> None:
     init_db()
 
-    pages_to_ingest = 2000
+    pages_to_ingest = 1000
     page_size = 100
 
     with (
@@ -112,18 +112,6 @@ def iterate_api_calls(
         time.sleep(0.5)
 
 
-def serialized_id_list(raw_list: object) -> str | None:
-    if isinstance(raw_list, list) and raw_list:
-        typed_list = cast(list[object], raw_list)
-        clean_items: list[str] = [
-            str(item).strip()
-            for item in typed_list
-            if item is not None and str(item).strip()
-        ]
-        return ",".join(clean_items) if clean_items else None
-    return None
-
-
 def build_results_package(
     songs_data: JsonResultsEnvelope,
 ) -> JsonResultsForDb | None:
@@ -132,17 +120,17 @@ def build_results_package(
         return None
     raw_results_json = json.dumps(songs_data)
 
-    airdate = parse_iso_play_time(songs_data.get("airdate"))
-    release_date = parse_release_date(songs_data.get("release_date"))
+    parsed_air_dt = parse_iso_play_time(songs_data.get("airdate"))
+    parsed_rel_dt = parse_release_date(songs_data.get("release_date"))
 
-    artist_ids_delimited = serialized_id_list(songs_data.get("artist_ids"))
-    labels_delimited = serialized_id_list(songs_data.get("labels"))
-    label_ids_delimited = serialized_id_list(songs_data.get("label_ids"))
+    artist_id_delim = serialized_id_list(songs_data.get("artist_ids"))
+    labels_delim = serialized_id_list(songs_data.get("labels"))
+    label_id_delim = serialized_id_list(songs_data.get("label_ids"))
 
     return JsonResultsForDb(
         play_id=raw_id,
         play_uri=songs_data.get("uri"),
-        airdate=airdate,
+        airdate=parsed_air_dt,
         show_id=songs_data.get("show"),
         show_uri=songs_data.get("show_uri"),
         image_uri=songs_data.get("image_uri"),
@@ -151,13 +139,13 @@ def build_results_package(
         track_brainz=songs_data.get("track_id"),
         recording_brainz=songs_data.get("recording_id"),
         artist_name=songs_data.get("artist"),
-        artist_brainz=artist_ids_delimited,
+        artist_brainz=artist_id_delim,
         album_name=songs_data.get("album"),
         release_brainz=songs_data.get("release_id"),
         release_group_brainz=songs_data.get("release_group_id"),
-        label=labels_delimited,
-        label_brainz=label_ids_delimited,
-        release_date=release_date,
+        label_name=labels_delim,
+        label_brainz=label_id_delim,
+        release_date=parsed_rel_dt,
         rotation_status=songs_data.get("rotation_status"),
         is_local=songs_data.get("is_local"),
         is_request=songs_data.get("is_request"),
@@ -191,6 +179,18 @@ def parse_release_date(raw_str: str | None) -> str | None:
         return cleansed_released_dt.strftime("%Y")
     except ValueError:
         return None
+
+
+def serialized_id_list(raw_list: object) -> str | None:
+    if isinstance(raw_list, list) and raw_list:
+        typed_list = cast(list[object], raw_list)
+        clean_items: list[str] = [
+            str(item).strip()
+            for item in typed_list
+            if item is not None and str(item).strip()
+        ]
+        return ",".join(clean_items) if clean_items else None
+    return None
 
 
 if __name__ == "__main__":

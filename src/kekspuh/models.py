@@ -54,7 +54,7 @@ class JsonResultsForDb:
     album_name: str | None
     release_brainz: str | None
     release_group_brainz: str | None
-    label: str | None
+    label_name: str | None
     label_brainz: str | None
     release_date: str | None
     rotation_status: str | None
