@@ -1,5 +1,14 @@
 ## kekspuh
 
----
+Personal project to start learning Python.
 
-Personal project to start learning python: ingest entirely of KEXP.org API endpoints, parse and store in sqlite, make some bonkers baseball-like trivia / facts with database queries. Eventually want to make a simple KEXP streaming website that shows query results for the currently playing song.
+### Current Status
+- **Backend**: Implemented a Python-based ingestion engine that fetches KEXP.org API endpoints.
+- **Data Storage**: Parsing and storing ingested data into a SQLite database.
+- **Next Steps**: Develop trivia/facts generation and a streaming website to display real-time results.
+
+### REAL Current Status
+- **No Idea if This Works Yet**
+
+### UNREAL Current Status
+- **A real old video game from 1998**
