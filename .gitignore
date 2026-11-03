@@ -2,3 +2,5 @@ _notes
 .venv
 data
 .env
+docs
+tests
