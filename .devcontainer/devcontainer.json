@@ -19,7 +19,7 @@
         "vscode": {
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "zsh",
-                "python.defaultInterpreterPath": "/workspaces/kekspuh/.venv/bin",
+                "python.defaultInterpreterPath": "/workspaces/kekspuh/.venv/bin/python",
                 "editor.formatOnSave": true,
                 "editor.codeActionsOnSave": {
                     "source.organizeImports": "explicit"
