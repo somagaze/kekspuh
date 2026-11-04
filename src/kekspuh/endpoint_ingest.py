@@ -21,8 +21,23 @@ from kekspuh.models import JsonFromKexp, JsonResultsEnvelope, JsonResultsForDb
 def main() -> None:
     init_db()
 
-    pages_to_ingest = 1
-    page_size = 1
+    while True:
+        try:
+            pages_to_ingest = int(input("How many pages to ingest?\n(1 to 2000): "))
+            pages_to_ingest = max(pages_to_ingest, 1)
+            pages_to_ingest = min(pages_to_ingest, 2000)
+            break
+        except ValueError:
+            print("Must be an integer.")
+
+    while True:
+        try:
+            page_size = int(input("How many records per page?\n(1 to 100): "))
+            page_size = max(page_size, 1)
+            page_size = min(page_size, 100)
+            break
+        except ValueError:
+            print("Must be an integer.")
 
     with (
         httpx.Client() as http_client,
