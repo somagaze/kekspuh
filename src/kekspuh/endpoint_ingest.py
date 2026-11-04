@@ -21,8 +21,8 @@ from kekspuh.models import JsonFromKexp, JsonResultsEnvelope, JsonResultsForDb
 def main() -> None:
     init_db()
 
-    pages_to_ingest = 1000
-    page_size = 100
+    pages_to_ingest = 1
+    page_size = 1
 
     with (
         httpx.Client() as http_client,
@@ -31,7 +31,8 @@ def main() -> None:
         start_url = construct_backfill_url(db_conn, page_size)
         print(f"beginning backfill run from {start_url}")
         print(
-            f"targeting up to {pages_to_ingest} pages ({pages_to_ingest * page_size} records)..."
+            f"targeting up to {pages_to_ingest} pages "
+            f"({pages_to_ingest * page_size} records)..."
         )
 
         total_saved = run_polling(
@@ -40,9 +41,7 @@ def main() -> None:
             start_url=start_url,
             max_pages=pages_to_ingest,
         )
-        print(
-            f"backfill completed, {total_saved} records committed to database."
-        )
+        print(f"backfill completed, {total_saved} records committed to database.")
 
 
 def construct_backfill_url(conn: sqlite3.Connection, limit: int = 100) -> str:
@@ -81,13 +80,13 @@ def run_polling(
         if db_entry_batch:
             newly_inserted = save_batch(conn, db_entry_batch)
             total_records_committed += newly_inserted
-            timenow = datetime.now(ZoneInfo("America/Los_Angeles")).strftime(
-                "%H:%M:%S"
-            )
+            timenow = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%H:%M:%S")
 
             print(
-                f"{timenow} [PAGE {page_counter:03d}] ingested {len(db_entry_batch)} plays "
-                f"-> committed {newly_inserted:03d} new rows (run total: {total_records_committed})"
+                f"{timenow} [PAGE {page_counter:03d}] ingested "
+                f"{len(db_entry_batch)} plays "
+                f"-> committed {newly_inserted:03d} new rows "
+                f"(run total: {total_records_committed})"
             )
     return total_records_committed
 
@@ -127,6 +126,10 @@ def build_results_package(
     labels_delim = serialized_id_list(songs_data.get("labels"))
     label_id_delim = serialized_id_list(songs_data.get("label_ids"))
 
+    is_local = str(songs_data.get("is_local", False)).lower()
+    is_request = str(songs_data.get("is_local", False)).lower()
+    is_live = str(songs_data.get("is_local", False)).lower()
+
     return JsonResultsForDb(
         play_id=raw_id,
         play_uri=songs_data.get("uri"),
@@ -147,9 +150,9 @@ def build_results_package(
         label_brainz=label_id_delim,
         release_date=parsed_rel_dt,
         rotation_status=songs_data.get("rotation_status"),
-        is_local=songs_data.get("is_local"),
-        is_request=songs_data.get("is_request"),
-        is_live=songs_data.get("is_live"),
+        is_local=is_local,
+        is_request=is_request,
+        is_live=is_live,
         comment=songs_data.get("comment"),
         location=songs_data.get("location"),
         location_name=songs_data.get("location_name"),
