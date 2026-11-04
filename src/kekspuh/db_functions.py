@@ -1,6 +1,5 @@
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 from kekspuh.models import JsonResultsForDb
 
@@ -144,127 +143,192 @@ def get_oldest_airdate(conn: sqlite3.Connection) -> str | None:
     return row[0] if row and isinstance(row[0], str) else None
 
 
+def resolve_artist(conn: sqlite3.Connection, record: JsonResultsForDb) -> int | None:
+    if not record.artist_name:
+        return None
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO artist (artist_name, artist_brainz, is_local)
+        VALUES (?, ?, ?);
+        """,
+        (record.artist_name, record.artist_brainz, record.is_local),
+    )
+    if record.artist_brainz:
+        cursor.execute(
+            "SELECT artist_ref FROM artist WHERE artist_brainz = ?;",
+            (record.artist_brainz,),
+        )
+    else:
+        cursor.execute(
+            "SELECT artist_ref FROM artist WHERE artist_name = ?;",
+            (record.artist_name,),
+        )
+
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def resolve_label(conn: sqlite3.Connection, record: JsonResultsForDb) -> int | None:
+    if not record.label_name:
+        return None
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO label (label_name, label_brainz)
+        VALUES (?, ?);
+        """,
+        (record.label_name, record.label_brainz),
+    )
+    if record.label_brainz:
+        cursor.execute(
+            "SELECT label_ref FROM label WHERE label_brainz = ?;",
+            (record.label_brainz,),
+        )
+    else:
+        cursor.execute(
+            "SELECT label_ref FROM label WHERE label_name = ?;", (record.label_name,)
+        )
+
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def resolve_album(
+    conn: sqlite3.Connection,
+    record: JsonResultsForDb,
+    artist_ref: int,
+    label_ref: int | None,
+) -> int | None:
+    if not record.album_name:
+        return None
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO album (
+            album_name, release_brainz, release_group_brainz, artist_ref, label_ref
+        ) VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            record.album_name,
+            record.release_brainz,
+            record.release_group_brainz,
+            artist_ref,
+            label_ref,
+        ),
+    )
+    if record.release_brainz:
+        cursor.execute(
+            "SELECT album_ref FROM album WHERE release_brainz = ?;",
+            (record.release_brainz,),
+        )
+    else:
+        cursor.execute(
+            "SELECT album_ref FROM album WHERE album_name = ? AND artist_ref = ?;",
+            (record.album_name, artist_ref),
+        )
+
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def resolve_track(
+    conn: sqlite3.Connection,
+    record: JsonResultsForDb,
+    artist_ref: int,
+    album_ref: int | None,
+) -> int | None:
+    if not record.track_name:
+        return None
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO track (
+            track_name, track_brainz, recording_brainz, release_date, artist_ref, album_ref
+        ) VALUES (?, ?, ?, ?, ?, ?);
+        """,
+        (
+            record.track_name,
+            record.track_brainz,
+            record.recording_brainz,
+            record.release_date,
+            artist_ref,
+            album_ref,
+        ),
+    )
+    if record.recording_brainz:
+        cursor.execute(
+            "SELECT track_ref FROM track WHERE recording_brainz = ?;",
+            (record.recording_brainz,),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT track_ref FROM track
+            WHERE track_name = ? AND artist_ref = ? AND IFNULL(album_ref, -1) = IFNULL(?, -1);
+            """,
+            (record.track_name, artist_ref, album_ref),
+        )
+
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
 def save_batch(conn: sqlite3.Connection, batch: list[JsonResultsForDb]) -> int:
-    sql_artist = """
-    INSERT OR IGNORE INTO artist (
-    artist_name, artist_brainz, is_local
-    ) VALUES (?, ?)
-    """
-
-    sql_label = """
-    INSERT OR IGNORE INTO label (
-    label_name, label_brainz
-    ) VALUES (?, ?)
-    """
-
-    sql_album = """
-    INSERT OR IGNORE INTO album (
-    album_name, release_brainz, release_group_brainz,
-    artist_ref, label_ref
-    ) VALUES (?, ?, ?, ?, ?)
-    """
-
-    sql_track = """
-    INSERT OR IGNORE INTO track (
-    track_name, track_brainz, recording_brainz,
-    release_date, artist_ref, album_ref
-    ) VALUES (?, ?, ?, ?, ?, ?)
-    """
-
+    inserted_plays = 0
     sql_play = """
     INSERT OR IGNORE INTO play (
-    play_id, airdate, show_id, play_type, track_ref,
-    is_request, is_live, rotation_status, comment,
-    location, location_name, play_uri, show_uri,
-    image_uri, thumbnail_uri
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        play_id, airdate, show_id, play_type, track_ref,
+        is_request, is_live, rotation_status, comment,
+        location, location_name, play_uri, show_uri,
+        image_uri, thumbnail_uri
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     """
-
-    sql_json = """
-    INSERT OR IGNORE INTO json (
-    play_id, raw_json
-    ) VALUES (?, ?)
-    """
-
-    artist_params: list[Any] = []
-    label_params: list[Any] = []
-    album_params: list[Any] = []
-    track_params: list[Any] = []
-    play_params: list[Any] = []
-    json_params: list[Any] = []
-
-    for art in batch:
-        if art.artist_name is None:
-            continue
-        artist_params.append(
-            (art.artist_name, art.artist_brainz, art.is_local)
-        )
-
-    for lab in batch:
-        if lab.label_name is None:
-            continue
-        label_params.append(
-            (
-                lab.label_name,
-                lab.label_brainz,
-            )
-        )
-
-    for alb in batch:
-        if alb.album_name is None:
-            continue
-        album_params.append(
-            (
-                alb.album_name,
-                alb.release_brainz,
-                alb.release_group_brainz,
-            )
-        )
-
-    for trk in batch:
-        if trk.track_name is None:
-            continue
-        track_params.append(
-            (
-                trk.track_name,
-                trk.track_brainz,
-                trk.recording_brainz,
-                trk.release_date,
-            )
-        )
-    for play in batch:
-        if play.play_id is None:
-            continue
-        play_params.append(
-            (
-                play.play_id,
-                play.airdate,
-                play.show_id,
-                play.play_type,
-                play.is_request,
-                play.is_live,
-                play.rotation_status,
-                play.comment,
-                play.location,
-                play.location_name,
-                play.play_uri,
-                play.show_uri,
-                play.image_uri,
-                play.thumbnail_uri,
-            )
-        )
-
-    for jsn in batch:
-        if jsn.raw_json is None:
-            continue
-        json_params.append((jsn.play_id, jsn.raw_json))
+    sql_json = "INSERT OR IGNORE INTO json (play_id, raw_json) VALUES (?, ?);"
 
     with conn:
-        cursor = conn.executemany(sql_artist, artist_params)
-        cursor = conn.executemany(sql_label, label_params)
-        cursor = conn.executemany(sql_album, album_params)
-        cursor = conn.executemany(sql_track, track_params)
-        cursor = conn.executemany(sql_play, play_params)
-        cursor = conn.executemany(sql_json, json_params)
-        inserted_count = cursor.rowcount
-        return inserted_count
+        cursor = conn.cursor()
+        for record in batch:
+            if record.play_id is None:
+                continue
+
+            artist_ref = resolve_artist(conn, record)
+            label_ref = resolve_label(conn, record)
+
+            album_ref = (
+                resolve_album(conn, record, artist_ref, label_ref)
+                if artist_ref
+                else None
+            )
+            track_ref = (
+                resolve_track(conn, record, artist_ref, album_ref)
+                if artist_ref
+                else None
+            )
+
+            cursor.execute(
+                sql_play,
+                (
+                    record.play_id,
+                    record.airdate,
+                    record.show_id,
+                    record.play_type,
+                    track_ref,
+                    record.is_request,
+                    record.is_live,
+                    record.rotation_status,
+                    record.comment,
+                    record.location,
+                    record.location_name,
+                    record.play_uri,
+                    record.show_uri,
+                    record.image_uri,
+                    record.thumbnail_uri,
+                ),
+            )
+            inserted_plays += cursor.rowcount
+
+            if record.raw_json:
+                cursor.execute(sql_json, (record.play_id, record.raw_json))
+
+    return inserted_plays
