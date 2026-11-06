@@ -1,8 +1,8 @@
 _notes
+.pytest_cache
 .venv
-.vscode
 data
-.env
 docs
 src/kekspuh/__pycache__
 tests
+.env
