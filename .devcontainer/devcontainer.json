@@ -9,6 +9,9 @@
     "features": {
         "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}
     },
+    "forwardPorts": [
+        8888
+    ],
     "remoteUser": "vscode",
     "containerUser": "vscode",
     "containerEnv": {
