@@ -142,8 +142,8 @@ def build_results_package(
     label_id_delim = serialized_id_list(songs_data.get("label_ids"))
 
     is_local = str(songs_data.get("is_local", False)).lower()
-    is_request = str(songs_data.get("is_local", False)).lower()
-    is_live = str(songs_data.get("is_local", False)).lower()
+    is_request = str(songs_data.get("is_request", False)).lower()
+    is_live = str(songs_data.get("is_live", False)).lower()
 
     return JsonResultsForDb(
         play_id=raw_id,
