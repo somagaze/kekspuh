@@ -28,16 +28,16 @@ class JsonResultsEnvelope(TypedDict, total=False):
     upstream API responses.
     """
 
-    play_id: int | None
+    id: int | None
     """Primary key for the play record."""
 
-    play_uri: str | None
+    uri: str | None
     """Canonical URI for the current play payload."""
 
     airdate: str | None
     """ISO 8601 timestamp denoting when the track or airbreak aired."""
 
-    show_id: int | None
+    show: int | None
     """Foreign key referencing the parent KEXP show (V2 API)."""
 
     show_uri: str | None
@@ -49,34 +49,34 @@ class JsonResultsEnvelope(TypedDict, total=False):
     thumbnail_uri: str | None
     """Scaled thumbnail URI for track artwork."""
 
-    track_name: str | None
+    song: str | None
     """Title of the aired track."""
 
-    track_brainz: str | None
+    track_id: str | None
     """MusicBrainz Track MBID pointing to a specific release's track position."""
 
-    recording_brainz: str | None
+    recording_id: str | None
     """MusicBrainz Recording MBID identifying unique audio performance/mix."""
 
-    artist_name: str | None
+    artist: str | None
     """Credited artist string, including collaboration markers (e.g., 'A feat. B')."""
 
-    artist_brainz: list[str] | None
+    artist_ids: list[str] | None
     """MusicBrainz Artist MBIDs corresponding to credited performers."""
 
-    album_name: str | None
+    album: str | None
     """Title of the release or compilation containing the track."""
 
-    release_brainz: str | None
+    release_id: str | None
     """MusicBrainz Release MBID for the specific physical or digital edition."""
 
-    release_group_brainz: str | None
+    release_group_id: str | None
     """MusicBrainz Release Group MBID aggregating all editions of the release."""
 
     labels: list[str] | None
     """Names of record labels credited on the release."""
 
-    label_brainz: list[str] | None
+    label_ids: list[str] | None
     """MusicBrainz Label MBIDs associated with the release."""
 
     release_date: str | None
@@ -104,7 +104,7 @@ class JsonResultsEnvelope(TypedDict, total=False):
     """Human-readable facility or studio name."""
 
     play_type: str | None
-    """Event classification discriminator (e.g., 'trackstream', 'airbreak')."""
+    """Event classification discriminator (e.g., 'trackplay', 'airbreak')."""
 
 
 @dataclass(frozen=True)
@@ -148,7 +148,7 @@ class JsonResultsForDb:
     """Credited artist string, including collaboration markers (e.g., 'A feat. B')."""
     artist_name: str | None
 
-    """Serlialzed and delimited MusicBrainz Artist MBIDs
+    """Serialized and delimited MusicBrainz Artist MBIDs
     corresponding to credited performers."""
     artist_brainz: str | None
 
@@ -161,10 +161,10 @@ class JsonResultsForDb:
     """MusicBrainz Release Group MBID aggregating all editions of the release."""
     release_group_brainz: str | None
 
-    """Serlialzed and delimited names of record labels credited on the release."""
+    """Serialized and delimited names of record labels credited on the release."""
     label_name: str | None
 
-    """Serlialzed and delimited MusicBrainz Label MBIDs
+    """Serialized and delimited MusicBrainz Label MBIDs
     associated with the release."""
     label_brainz: str | None
 
@@ -192,7 +192,7 @@ class JsonResultsForDb:
     """Human-readable facility or studio name."""
     location_name: str | None
 
-    """Event classification discriminator (e.g., 'trackstream', 'airbreak')."""
+    """Event classification discriminator (e.g., 'trackplay', 'airbreak')."""
     play_type: str | None
 
     """Class list[JsonResultsEnvelope] cast into a string"""

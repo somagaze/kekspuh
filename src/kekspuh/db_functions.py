@@ -3,7 +3,7 @@ from pathlib import Path
 
 from kekspuh.models import JsonResultsForDb
 
-DB_PATH = Path("./data/kekspuh.db")
+DB_PATH = Path("/workspaces/kekspuh/data/kekspuh.db")
 
 
 def connect_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
@@ -135,7 +135,7 @@ def get_oldest_airdate(conn: sqlite3.Connection) -> str | None:
         SELECT airdate
         FROM play
         WHERE airdate IS NOT NULL
-        ORDER BY airdate ASC
+        ORDER BY airdate
         LIMIT 1;
         """
     )

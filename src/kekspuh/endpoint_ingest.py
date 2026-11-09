@@ -3,7 +3,6 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from datetime import datetime
-from typing import cast
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -95,10 +94,10 @@ def run_polling(
         if db_entry_batch:
             newly_inserted = save_batch(conn, db_entry_batch)
             total_records_committed += newly_inserted
-            timenow = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%H:%M:%S")
+            time_now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%H:%M:%S")
 
             print(
-                f"{timenow} [PAGE {page_counter:03d}] ingested "
+                f"{time_now} [PAGE {page_counter:03d}] ingested "
                 f"{len(db_entry_batch)} plays "
                 f"-> committed {newly_inserted:03d} new rows "
                 f"(run total: {total_records_committed})"
@@ -115,7 +114,7 @@ def iterate_api_calls(
     while api_page_url and api_pages_fetched < max_pages:
         resp = client.get(api_page_url, timeout=15.0)
         resp.raise_for_status()
-        payload_all = cast(JsonFromKexp, resp.json())
+        payload_all: JsonFromKexp = resp.json()
 
         payload_results = payload_all.get("results") or []
         if payload_results:
@@ -146,7 +145,7 @@ def build_results_package(
     is_live = str(songs_data.get("is_live", False)).lower()
 
     return JsonResultsForDb(
-        play_id=raw_id,
+        play_id=songs_data.get("id"),
         play_uri=songs_data.get("uri"),
         airdate=parsed_air_dt,
         show_id=songs_data.get("show"),
@@ -199,17 +198,16 @@ def parse_release_date(raw_str: str | None) -> str | None:
         return None
 
 
-def serialized_id_list(raw_list: object) -> str | None:
-    if isinstance(raw_list, list) and raw_list:
-        typed_list = cast(list[object], raw_list)
-        clean_items: list[str] = [
-            str(item).strip()
-            for item in typed_list
-            if item is not None and str(item).strip()
-        ]
-        return ",".join(clean_items) if clean_items else None
-    return None
+def serialized_id_list(raw_list: list[str] | None) -> str | None:
+    if not raw_list:
+        return None
 
+    clean_items = [
+        item.strip()
+        for item in raw_list
+        if item and item.strip()
+    ]
+    return ",".join(clean_items) if clean_items else None
 
 if __name__ == "__main__":
     main()
