@@ -3,6 +3,8 @@
     "build": {
         "dockerfile": "dockerfile"
     },
+    "workspaceFolder": "/workspaces/kekspuh",
+    "workspaceMount": "source=//wsl.localhost/devbuntu/home/devbuntu/_dev/kekspuh,target=/workspaces/kekspuh,type=bind",
     "runArgs": [
         "--hostname=kekspuh"
     ],
@@ -16,40 +18,16 @@
     "containerUser": "vscode",
     "containerEnv": {
         "PIP_REQUIRE_VIRTUALENV": "true",
-        "UV_PROJECT_ENVIRONMENT": "/workspaces/kekspuh/.venv"
+        "UV_PROJECT_ENVIRONMENT": "${containerWorkspaceFolder}/.venv",
+        "SHELL": "/bin/zsh"
     },
     "customizations": {
-        "vscode": {
-            "settings": {
-                "terminal.integrated.defaultProfile.linux": "zsh",
-                "python.defaultInterpreterPath": "/workspaces/kekspuh/.venv/bin/python",
-                "editor.formatOnSave": true,
-                "editor.codeActionsOnSave": {
-                    "source.organizeImports": "explicit"
-                },
-                "[python]": {
-                    "editor.defaultFormatter": "charliermarsh.ruff",
-                    "editor.formatOnSave": true,
-                    "editor.codeActionsOnSave": {
-                        "source.fixAll.ruff": "explicit",
-                        "source.organizeImports.ruff": "explicit"
-                    }
-                }
-            },
-            "extensions": [
-                "charliermarsh.ruff",
-                "humao.rest-client",
-                "mikestead.dotenv",
-                "ms-azuretools.vscode-containers",
-                "ms-python.python",
-                "ms-python.vscode-pylance",
-                "ms-python.debugpy",
-                "redhat.vscode-yaml",
-                "tabbyml.vscode-tabby",
-                "tamasfe.even-better-toml"
+        "jetbrains": {
+            "backend": "PyCharm",
+            "plugins": [
+                "com.koxudxh.ruff"
             ]
         }
     },
-    "mounts": [],
     "postCreateCommand": "bash .devcontainer/post-create.sh"
 }

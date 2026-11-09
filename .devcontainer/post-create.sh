@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 1. git workspace ownership
-git config --global --add safe.directory "${PWD}"
+# 1. Determine script directory and resolve project root dynamically
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(dirname "${SCRIPT_DIR}")"
 
-# 2. python environment via native uv workflow
+# 2. git workspace ownership
+git config --global --add safe.directory "${WORKSPACE_DIR}"
+
+# 3. python environment via native uv workflow
+cd "${WORKSPACE_DIR}"
 uv sync --all-groups
 
-# 3. oh-my-zsh plugins (defined in .zshrc and .zshrc points to ZSH_CUSTOM="$HOME/.zsh/custom")
+# 4. oh-my-zsh plugins
 CUSTOM_PLUGIN_DIR="${HOME}/.zsh/custom/plugins"
 mkdir -p "${CUSTOM_PLUGIN_DIR}"
 
@@ -21,13 +26,12 @@ if [ ! -d "${CUSTOM_PLUGIN_DIR}/zsh-autosuggestions" ]; then
         "${CUSTOM_PLUGIN_DIR}/zsh-autosuggestions"
 fi
 
-# 4. dotfiles repository acquisition
+# 5. dotfiles repository acquisition
 DOTFILES_DIR="${HOME}/dotfiles"
 if [ ! -d "${DOTFILES_DIR}" ]; then
-    # Use HTTPS to avoid unauthenticated SSH key aborts inside containers
     git clone https://github.com/somagaze/muhdohts.git "${DOTFILES_DIR}"
 fi
 
-# 5. clear collision targets and link
+# 6. clear collision targets and link
 rm -f "${HOME}/.zshrc"
 stow -d "${DOTFILES_DIR}" -t "${HOME}" zsh
