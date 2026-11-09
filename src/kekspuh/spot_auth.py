@@ -14,7 +14,8 @@ CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 PORT = 8888
 
-TOKEN_FILE = Path("_auth/spotify_token.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TOKEN_FILE = PROJECT_ROOT / "_auth" / "spotify_token.json"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
 SCOPE = "playlist-modify-public playlist-modify-private playlist-read-private"
@@ -45,7 +46,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"Authorization failed. No code parameter detected.")
 
-    def log_message(self, format: str, *args: Any) -> None:
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         return
 
 
@@ -77,6 +78,9 @@ def _is_token_expired(tokens: dict[str, Any]) -> bool:
 
 
 def _execute_authorization_code_flow() -> dict[str, Any]:
+    if not CLIENT_ID or not CLIENT_SECRET:
+        raise RuntimeError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET environment variable.")
+
     AuthState.code = None
     server = HTTPServer(("0.0.0.0", PORT), CallbackHandler)
 
@@ -129,6 +133,9 @@ def _execute_authorization_code_flow() -> dict[str, Any]:
 
 
 def _refresh_access_token(refresh_token: str) -> dict[str, Any] | None:
+    if not CLIENT_ID or not CLIENT_SECRET:
+        raise RuntimeError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET environment variable.")
+
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
