@@ -10,52 +10,12 @@ import httpx
 
 from kekspuh.db_functions import (
     connect_db,
+    get_latest_airdate,
     get_oldest_airdate,
     init_db,
     save_batch,
 )
 from kekspuh.models import JsonFromKexp, JsonResultsEnvelope, JsonResultsForDb
-
-
-def main() -> None:
-    init_db()
-
-    while True:
-        try:
-            pages_to_ingest = int(input("How many pages to ingest?\n(1 to 2000): "))
-            pages_to_ingest = max(pages_to_ingest, 1)
-            pages_to_ingest = min(pages_to_ingest, 2000)
-            break
-        except ValueError:
-            print("Must be an integer.")
-
-    while True:
-        try:
-            page_size = int(input("How many records per page?\n(1 to 100): "))
-            page_size = max(page_size, 1)
-            page_size = min(page_size, 100)
-            break
-        except ValueError:
-            print("Must be an integer.")
-
-    with (
-        httpx.Client() as http_client,
-        connect_db() as db_conn,
-    ):
-        start_url = construct_backfill_url(db_conn, page_size)
-        print(f"beginning backfill run from {start_url}")
-        print(
-            f"targeting up to {pages_to_ingest} pages "
-            f"({pages_to_ingest * page_size} records)..."
-        )
-
-        total_saved = run_polling(
-            client=http_client,
-            conn=db_conn,
-            start_url=start_url,
-            max_pages=pages_to_ingest,
-        )
-        print(f"backfill completed, {total_saved} records committed to database.")
 
 
 def construct_backfill_url(conn: sqlite3.Connection, limit: int = 100) -> str:
@@ -66,9 +26,21 @@ def construct_backfill_url(conn: sqlite3.Connection, limit: int = 100) -> str:
         iso_timestamp = oldest_airdate.replace(" ", "T")
         if not iso_timestamp.endswith("Z"):
             iso_timestamp += "Z"
-
         encoded_timestamp = quote(iso_timestamp)
         return f"{base_endpoint}&airdate_before={encoded_timestamp}"
+    return base_endpoint
+
+
+def construct_forward_url(conn: sqlite3.Connection, limit: int = 100) -> str:
+    base_endpoint = f"https://api.kexp.org/v2/plays/?limit={limit}"
+    latest_airdate = get_latest_airdate(conn)
+
+    if latest_airdate:
+        iso_timestamp = latest_airdate.replace(" ", "T")
+        if not iso_timestamp.endswith("Z"):
+            iso_timestamp += "Z"
+        encoded_timestamp = quote(iso_timestamp)
+        return f"{base_endpoint}&airdate_after={encoded_timestamp}"
     return base_endpoint
 
 
@@ -77,8 +49,8 @@ def run_polling(
     conn: sqlite3.Connection,
     start_url: str,
     max_pages: int,
+    stop_on_zero_inserts: bool = False,
 ) -> int:
-
     total_records_committed = 0
 
     for page_counter, all_results in enumerate(
@@ -91,6 +63,7 @@ def run_polling(
             if db_entry_record is not None:
                 db_entry_batch.append(db_entry_record)
 
+        newly_inserted = 0
         if db_entry_batch:
             newly_inserted = save_batch(conn, db_entry_batch)
             total_records_committed += newly_inserted
@@ -102,7 +75,80 @@ def run_polling(
                 f"-> committed {newly_inserted:03d} new rows "
                 f"(run total: {total_records_committed})"
             )
+
+        if stop_on_zero_inserts and newly_inserted == 0:
+            print("No new plays found. Forward fill is caught up.")
+            break
+
     return total_records_committed
+
+
+def run_forward_fill(
+    pages: int = 10,
+    page_size: int = 50,
+) -> int:
+    init_db()
+    with httpx.Client() as http_client, connect_db() as db_conn:
+        start_url = construct_forward_url(db_conn, page_size)
+        print(f"Beginning forward fill from: {start_url}")
+        return run_polling(
+            client=http_client,
+            conn=db_conn,
+            start_url=start_url,
+            max_pages=pages,
+            stop_on_zero_inserts=True,
+        )
+
+
+def main() -> None:
+    init_db()
+
+    while True:
+        mode = input("Choose fill direction ([b]ackfill / [f]orward): ").strip().lower()
+        if mode in ("b", "back", "backfill", "f", "forward"):
+            is_forward = mode.startswith("f")
+            break
+        print("Invalid selection. Enter 'b' for backfill or 'f' for forward.")
+
+    while True:
+        try:
+            pages_to_ingest = int(input("How many pages to ingest?\n(1 to 2000): "))
+            pages_to_ingest = max(1, min(pages_to_ingest, 2000))
+            break
+        except ValueError:
+            print("Must be an integer.")
+
+    while True:
+        try:
+            page_size = int(input("How many records per page?\n(1 to 100): "))
+            page_size = max(1, min(page_size, 100))
+            break
+        except ValueError:
+            print("Must be an integer.")
+
+    with httpx.Client() as http_client, connect_db() as db_conn:
+        if is_forward:
+            start_url = construct_forward_url(db_conn, page_size)
+            print(f"Beginning forward fill from {start_url}")
+            total_saved = run_polling(
+                client=http_client,
+                conn=db_conn,
+                start_url=start_url,
+                max_pages=pages_to_ingest,
+                stop_on_zero_inserts=True,
+            )
+            print(f"Forward fill completed, {total_saved} records committed to database.")
+        else:
+            start_url = construct_backfill_url(db_conn, page_size)
+            print(f"Beginning backfill run from {start_url}")
+            total_saved = run_polling(
+                client=http_client,
+                conn=db_conn,
+                start_url=start_url,
+                max_pages=pages_to_ingest,
+                stop_on_zero_inserts=False,
+            )
+            print(f"Backfill completed, {total_saved} records committed to database.")
 
 
 def iterate_api_calls(

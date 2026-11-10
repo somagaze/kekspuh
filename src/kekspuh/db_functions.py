@@ -143,6 +143,21 @@ def get_oldest_airdate(conn: sqlite3.Connection) -> str | None:
     return row[0] if row and isinstance(row[0], str) else None
 
 
+def get_latest_airdate(conn: sqlite3.Connection) -> str | None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT airdate
+        FROM play
+        WHERE airdate IS NOT NULL
+        ORDER BY airdate DESC
+        LIMIT 1;
+        """
+    )
+    row = cursor.fetchone()
+    return row[0] if row and isinstance(row[0], str) else None
+
+
 def resolve_artist(conn: sqlite3.Connection, record: JsonResultsForDb) -> int | None:
     if not record.artist_name:
         return None
