@@ -21,7 +21,7 @@ from kekspuh.db_functions import (
 from kekspuh.endpoint_ingest import build_results_package
 from kekspuh.endpoint_jobber import KexpClient
 
-ALL_ENDPOINTS = ["programs", "hosts", "shows", "timeslots", "plays"]
+ALL_ENDPOINTS: tuple[str, ...] = ("programs", "hosts", "shows", "timeslots", "plays")
 
 
 def prompt_int(prompt: str, min_val: int, max_val: int) -> int:
@@ -35,7 +35,7 @@ def prompt_int(prompt: str, min_val: int, max_val: int) -> int:
             print("Error: Input must be a valid integer.")
 
 
-def prompt_endpoint(endpoints: list[str] = ALL_ENDPOINTS) -> str:
+def prompt_endpoint(endpoints: tuple[str, ...] = ALL_ENDPOINTS) -> str:
     print("\nAvailable Endpoints:")
     for idx, name in enumerate(endpoints, start=1):
         print(f"  [{idx}] {name}")
@@ -247,8 +247,8 @@ def run_cli() -> None:
         print("\n==============================")
         print("      KEKSPUH INGESTION       ")
         print("==============================")
-        print("  [1] Backfill historical data (oldest -> oldestest)")
-        print("  [2] Forward fill new data (newest -> newestest)")
+        print("  [1] Backfill historical data (oldest -> oldest-est)")
+        print("  [2] Forward fill new data (newest -> newest-est)")
         print("  [3] Start polling")
         print("  [4] Out though the in door")
 

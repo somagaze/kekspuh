@@ -219,7 +219,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_play_track_ref ON play(track_ref);
             CREATE INDEX IF NOT EXISTS idx_show_program_id ON show(program_id);
             CREATE INDEX IF NOT EXISTS idx_show_start_time ON show(start_time);
-            """
+            """  # noqa: E501
         )
 
 
@@ -271,7 +271,7 @@ def save_host(conn: sqlite3.Connection, host_data: dict[str, Any]) -> None:
             is_active = excluded.is_active,
             location = excluded.location,
             uri = excluded.uri;
-        """,
+        """,  # noqa: E501
         (
             host_id,
             host_data.get("name", ""),
@@ -425,7 +425,7 @@ def save_timeslot(conn: sqlite3.Connection, timeslot_data: dict[str, Any]) -> No
                 (host_id, "Unknown Host"),
             )
             conn.execute(
-                "INSERT OR IGNORE INTO timeslot_jx_host (timeslot_id, host_id) VALUES (?, ?);",
+                "INSERT OR IGNORE INTO timeslot_jx_host (timeslot_id, host_id) VALUES (?, ?);",  # noqa: E501
                 (timeslot_id, host_id),
             )
 
@@ -535,7 +535,7 @@ def resolve_track(
         INSERT OR IGNORE INTO track (
             track_name, track_brainz, recording_brainz, release_date, artist_ref, album_ref
         ) VALUES (?, ?, ?, ?, ?, ?);
-        """,
+        """,  # noqa: E501
         (
             record.track_name,
             record.track_brainz,
@@ -555,7 +555,7 @@ def resolve_track(
             """
             SELECT track_ref FROM track
             WHERE track_name = ? AND artist_ref = ? AND IFNULL(album_ref, -1) = IFNULL(?, -1);
-            """,
+            """,  # noqa: E501
             (record.track_name, artist_ref, album_ref),
         )
     row = cursor.fetchone()
@@ -567,11 +567,11 @@ def get_oldest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
     cursor = conn.cursor()
     if endpoint == "plays":
         cursor.execute(
-            "SELECT airdate FROM play WHERE airdate IS NOT NULL ORDER BY airdate LIMIT 1;"
+            "SELECT airdate FROM play WHERE airdate IS NOT NULL ORDER BY airdate LIMIT 1;"  # noqa: E501
         )
     elif endpoint == "shows":
         cursor.execute(
-            "SELECT start_time FROM show WHERE start_time IS NOT NULL ORDER BY start_time LIMIT 1;"
+            "SELECT start_time FROM show WHERE start_time IS NOT NULL ORDER BY start_time LIMIT 1;"  # noqa: E501
         )
     else:
         return None
@@ -585,11 +585,11 @@ def get_latest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
     cursor = conn.cursor()
     if endpoint == "plays":
         cursor.execute(
-            "SELECT airdate FROM play WHERE airdate IS NOT NULL ORDER BY airdate DESC LIMIT 1;"
+            "SELECT airdate FROM play WHERE airdate IS NOT NULL ORDER BY airdate DESC LIMIT 1;"  # noqa: E501
         )
     elif endpoint == "shows":
         cursor.execute(
-            "SELECT start_time FROM show WHERE start_time IS NOT NULL ORDER BY start_time DESC LIMIT 1;"
+            "SELECT start_time FROM show WHERE start_time IS NOT NULL ORDER BY start_time DESC LIMIT 1;"  # noqa: E501
         )
     else:
         return None

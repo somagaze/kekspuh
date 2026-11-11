@@ -28,7 +28,7 @@ class AuthState:
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
+    def do_GET(self) -> None:  # noqa: N802
         parsed_url = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(parsed_url.query)
 
@@ -79,7 +79,9 @@ def _is_token_expired(tokens: dict[str, Any]) -> bool:
 
 def _execute_authorization_code_flow() -> dict[str, Any]:
     if not CLIENT_ID or not CLIENT_SECRET:
-        raise RuntimeError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET environment variable.")
+        raise RuntimeError(
+            "Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET environment variable."
+        )
 
     AuthState.code = None
     server = HTTPServer(("0.0.0.0", PORT), CallbackHandler)
@@ -134,7 +136,9 @@ def _execute_authorization_code_flow() -> dict[str, Any]:
 
 def _refresh_access_token(refresh_token: str) -> dict[str, Any] | None:
     if not CLIENT_ID or not CLIENT_SECRET:
-        raise RuntimeError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET environment variable.")
+        raise RuntimeError(
+            "Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET environment variable."
+        )
 
     payload = {
         "grant_type": "refresh_token",
