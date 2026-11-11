@@ -5,11 +5,7 @@ from typing import TypedDict
 
 
 class JsonFromKexp(TypedDict, total=False):
-    """Raw JSON key-value pairs from API response.
-
-    All fields are optional (total=False) to accommodate sparse or malformed
-    upstream API responses.
-    """
+    """Raw JSON key-value pairs from API response."""
 
     next: str | None
     """Canonical URI for the next play payload."""
@@ -22,11 +18,7 @@ class JsonFromKexp(TypedDict, total=False):
 
 
 class JsonResultsEnvelope(TypedDict, total=False):
-    """Raw JSON key-value pairs formatted for database ingestion.
-
-    All fields are optional (total=False) to accommodate sparse or malformed
-    upstream API responses.
-    """
+    """Raw JSON results list key-value pairs"""
 
     id: int | None
     """Primary key for the play record."""
@@ -109,11 +101,7 @@ class JsonResultsEnvelope(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class JsonResultsForDb:
-    """Raw JSON key-value pairs prepared for database ingestion.
-
-    All fields are optional (total=False) to accommodate sparse or malformed
-    upstream API responses.
-    """
+    """Raw JSON key-value pairs prepared for database ingestion."""
 
     play_id: int | None
     """Primary key for the play record."""
