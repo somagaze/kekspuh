@@ -1,245 +1,73 @@
+from __future__ import annotations
+
 import json
-import sqlite3
-import time
-from collections.abc import Iterator
 from datetime import datetime
-from urllib.parse import quote
-from zoneinfo import ZoneInfo
+from typing import Any
 
-import httpx
-
-from kekspuh.db_functions import (
-    connect_db,
-    get_latest_airdate,
-    get_oldest_airdate,
-    init_db,
-    save_batch,
-)
-from kekspuh.models import JsonFromKexp, JsonResultsEnvelope, JsonResultsForDb
-
-
-def construct_backfill_url(conn: sqlite3.Connection, limit: int = 100) -> str:
-    base_endpoint = f"https://api.kexp.org/v2/plays/?limit={limit}"
-    oldest_airdate = get_oldest_airdate(conn)
-
-    if oldest_airdate:
-        iso_timestamp = oldest_airdate.replace(" ", "T")
-        if not iso_timestamp.endswith("Z"):
-            iso_timestamp += "Z"
-        encoded_timestamp = quote(iso_timestamp)
-        return f"{base_endpoint}&airdate_before={encoded_timestamp}"
-    return base_endpoint
-
-
-def construct_forward_url(conn: sqlite3.Connection, limit: int = 100) -> str:
-    base_endpoint = f"https://api.kexp.org/v2/plays/?limit={limit}"
-    latest_airdate = get_latest_airdate(conn)
-
-    if latest_airdate:
-        iso_timestamp = latest_airdate.replace(" ", "T")
-        if not iso_timestamp.endswith("Z"):
-            iso_timestamp += "Z"
-        encoded_timestamp = quote(iso_timestamp)
-        return f"{base_endpoint}&airdate_after={encoded_timestamp}"
-    return base_endpoint
-
-
-def run_polling(
-    client: httpx.Client,
-    conn: sqlite3.Connection,
-    start_url: str,
-    max_pages: int,
-    stop_on_zero_inserts: bool = False,
-) -> int:
-    total_records_committed = 0
-
-    for page_counter, all_results in enumerate(
-        iterate_api_calls(client, start_url, max_pages), start=1
-    ):
-        db_entry_batch: list[JsonResultsForDb] = []
-
-        for single_result in all_results:
-            db_entry_record = build_results_package(single_result)
-            if db_entry_record is not None:
-                db_entry_batch.append(db_entry_record)
-
-        newly_inserted = 0
-        if db_entry_batch:
-            newly_inserted = save_batch(conn, db_entry_batch)
-            total_records_committed += newly_inserted
-            time_now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%H:%M:%S")
-
-            print(
-                f"{time_now} [PAGE {page_counter:03d}] ingested "
-                f"{len(db_entry_batch)} plays "
-                f"-> committed {newly_inserted:03d} new rows "
-                f"(run total: {total_records_committed})"
-            )
-
-        if stop_on_zero_inserts and newly_inserted == 0:
-            print("No new plays found. Forward fill is caught up.")
-            break
-
-    return total_records_committed
-
-
-def run_forward_fill(
-    pages: int = 10,
-    page_size: int = 50,
-) -> int:
-    init_db()
-    with httpx.Client() as http_client, connect_db() as db_conn:
-        start_url = construct_forward_url(db_conn, page_size)
-        print(f"Beginning forward fill from: {start_url}")
-        return run_polling(
-            client=http_client,
-            conn=db_conn,
-            start_url=start_url,
-            max_pages=pages,
-            stop_on_zero_inserts=True,
-        )
-
-
-def main() -> None:
-    init_db()
-
-    while True:
-        mode = input("Choose fill direction ([b]ackfill / [f]orward): ").strip().lower()
-        if mode in ("b", "back", "backfill", "f", "forward"):
-            is_forward = mode.startswith("f")
-            break
-        print("Invalid selection. Enter 'b' for backfill or 'f' for forward.")
-
-    while True:
-        try:
-            pages_to_ingest = int(input("How many pages to ingest?\n(1 to 2000): "))
-            pages_to_ingest = max(1, min(pages_to_ingest, 2000))
-            break
-        except ValueError:
-            print("Must be an integer.")
-
-    while True:
-        try:
-            page_size = int(input("How many records per page?\n(1 to 100): "))
-            page_size = max(1, min(page_size, 100))
-            break
-        except ValueError:
-            print("Must be an integer.")
-
-    with httpx.Client() as http_client, connect_db() as db_conn:
-        if is_forward:
-            start_url = construct_forward_url(db_conn, page_size)
-            print(f"Beginning forward fill from {start_url}")
-            total_saved = run_polling(
-                client=http_client,
-                conn=db_conn,
-                start_url=start_url,
-                max_pages=pages_to_ingest,
-                stop_on_zero_inserts=True,
-            )
-            print(f"Forward fill completed, {total_saved} records committed to database.")
-        else:
-            start_url = construct_backfill_url(db_conn, page_size)
-            print(f"Beginning backfill run from {start_url}")
-            total_saved = run_polling(
-                client=http_client,
-                conn=db_conn,
-                start_url=start_url,
-                max_pages=pages_to_ingest,
-                stop_on_zero_inserts=False,
-            )
-            print(f"Backfill completed, {total_saved} records committed to database.")
-
-
-def iterate_api_calls(
-    client: httpx.Client, start_url: str, max_pages: int
-) -> Iterator[list[JsonResultsEnvelope]]:
-    api_page_url: str | None = start_url
-    api_pages_fetched = 0
-
-    while api_page_url and api_pages_fetched < max_pages:
-        resp = client.get(api_page_url, timeout=15.0)
-        resp.raise_for_status()
-        payload_all: JsonFromKexp = resp.json()
-
-        payload_results = payload_all.get("results") or []
-        if payload_results:
-            yield payload_results
-
-        api_page_url = payload_all.get("next")
-        api_pages_fetched += 1
-        time.sleep(0.5)
+from kekspuh.db_functions import parse_iso_to_utc
+from kekspuh.models import JsonResultsEnvelope, JsonResultsForDb
 
 
 def build_results_package(
-    songs_data: JsonResultsEnvelope,
+    plays_results: JsonResultsEnvelope | dict[str, Any],
 ) -> JsonResultsForDb | None:
-    raw_id = songs_data.get("id")
-    if not isinstance(raw_id, int):
+    id_key = plays_results.get("id")
+    if not isinstance(id_key, int):
         return None
-    raw_results_json = json.dumps(songs_data)
 
-    parsed_air_dt = parse_iso_play_time(songs_data.get("airdate"))
-    parsed_rel_dt = parse_release_date(songs_data.get("release_date"))
+    results_dump = json.dumps(plays_results)
 
-    artist_id_delim = serialized_id_list(songs_data.get("artist_ids"))
-    labels_delim = serialized_id_list(songs_data.get("labels"))
-    label_id_delim = serialized_id_list(songs_data.get("label_ids"))
+    parsed_air_dt = parse_iso_to_utc(plays_results.get("airdate"))
+    parsed_rel_dt = parse_release_date(plays_results.get("release_date"))
 
-    is_local = str(songs_data.get("is_local", False)).lower()
-    is_request = str(songs_data.get("is_request", False)).lower()
-    is_live = str(songs_data.get("is_live", False)).lower()
+    artist_id_delim = serialized_id_list(plays_results.get("artist_ids"))
+    labels_delim = serialized_id_list(plays_results.get("labels"))
+    label_id_delim = serialized_id_list(plays_results.get("label_ids"))
+
+    is_local = str(plays_results.get("is_local", False)).lower()
+    is_request = str(plays_results.get("is_request", False)).lower()
+    is_live = str(plays_results.get("is_live", False)).lower()
 
     return JsonResultsForDb(
-        play_id=songs_data.get("id"),
-        play_uri=songs_data.get("uri"),
+        play_id=id_key,
+        play_uri=plays_results.get("uri"),
         airdate=parsed_air_dt,
-        show_id=songs_data.get("show"),
-        show_uri=songs_data.get("show_uri"),
-        image_uri=songs_data.get("image_uri"),
-        thumbnail_uri=songs_data.get("thumbnail_uri"),
-        track_name=songs_data.get("song"),
-        track_brainz=songs_data.get("track_id"),
-        recording_brainz=songs_data.get("recording_id"),
-        artist_name=songs_data.get("artist"),
+        show_id=plays_results.get("show"),
+        show_uri=plays_results.get("show_uri"),
+        image_uri=plays_results.get("image_uri"),
+        thumbnail_uri=plays_results.get("thumbnail_uri"),
+        track_name=plays_results.get("song"),
+        track_brainz=plays_results.get("track_id"),
+        recording_brainz=plays_results.get("recording_id"),
+        artist_name=plays_results.get("artist"),
         artist_brainz=artist_id_delim,
-        album_name=songs_data.get("album"),
-        release_brainz=songs_data.get("release_id"),
-        release_group_brainz=songs_data.get("release_group_id"),
+        album_name=plays_results.get("album"),
+        release_brainz=plays_results.get("release_id"),
+        release_group_brainz=plays_results.get("release_group_id"),
         label_name=labels_delim,
         label_brainz=label_id_delim,
         release_date=parsed_rel_dt,
-        rotation_status=songs_data.get("rotation_status"),
+        rotation_status=plays_results.get("rotation_status"),
         is_local=is_local,
         is_request=is_request,
         is_live=is_live,
-        comment=songs_data.get("comment"),
-        location=songs_data.get("location"),
-        location_name=songs_data.get("location_name"),
-        play_type=songs_data.get("play_type"),
-        raw_json=raw_results_json,
+        comment=plays_results.get("comment"),
+        location=plays_results.get("location"),
+        location_name=plays_results.get("location_name"),
+        play_type=plays_results.get("play_type"),
+        raw_json=results_dump,
     )
-
-
-def parse_iso_play_time(raw_str: str | None) -> str | None:
-    if not raw_str:
-        return None
-    try:
-        cleaned_play_dt = datetime.fromisoformat(raw_str).astimezone()
-        return cleaned_play_dt.strftime("%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None
 
 
 def parse_release_date(raw_str: str | None) -> str | None:
     if not raw_str:
         return None
-    release_date_check = raw_str.strip()
-    if len(release_date_check) == 4 and release_date_check.isdigit():
-        return release_date_check
+    cleaned = raw_str.strip()
+    if len(cleaned) == 4 and cleaned.isdigit():
+        return cleaned
     try:
-        cleansed_released_dt = datetime.fromisoformat(release_date_check)
-        return cleansed_released_dt.strftime("%Y")
+        dt = datetime.fromisoformat(cleaned)
+        return dt.strftime("%Y")
     except ValueError:
         return None
 
@@ -247,13 +75,5 @@ def parse_release_date(raw_str: str | None) -> str | None:
 def serialized_id_list(raw_list: list[str] | None) -> str | None:
     if not raw_list:
         return None
-
-    clean_items = [
-        item.strip()
-        for item in raw_list
-        if item and item.strip()
-    ]
+    clean_items = sorted({item.strip() for item in raw_list if item and item.strip()})
     return ",".join(clean_items) if clean_items else None
-
-if __name__ == "__main__":
-    main()
