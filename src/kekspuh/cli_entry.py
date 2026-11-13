@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime
 from typing import Any
@@ -86,9 +87,10 @@ def run_backfill() -> None:
 
     if endpoint == "plays":
         confirmed = confirm_action(
-            "You've selected Backfill 'plays'. Ensure you have backfilled:\n"
-            "   programs & hosts > shows > timeslots\n"
-            "before proceeding so plays can resolve foreign keys."
+            "You've selected backfill <plays>\n"
+            "To resolve foreign keys, ensure you have first backfilled:\n"
+            "  1. <programs> & <hosts> THEN\n"
+            "  2. <timeslots> & <shows>"
         )
         if not confirmed:
             print("Action cancelled.")
@@ -96,8 +98,9 @@ def run_backfill() -> None:
 
     elif endpoint in ("shows", "timeslots"):
         confirmed = confirm_action(
-            f"You've selected Backfill '{endpoint}'."
-            "Ensure you have backfilled programs & hosts first."
+            f"You've selected backfill <{endpoint}>\n"
+            "To resolve foreign keys, ensure you have first backfilled:\n"
+            "  <programs> & <hosts>"
         )
         if not confirmed:
             print("Action cancelled.")
@@ -119,7 +122,7 @@ def run_backfill() -> None:
                 print(f"Backfilling shows older than: {oldest_ts}")
         else:
             print(
-                f"No existing {endpoint} records found in database."
+                f"No existing <{endpoint}> records found in database."
                 "Starting from the present."
             )
 
@@ -136,11 +139,11 @@ def run_backfill() -> None:
             total_items += len(page)
             now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
             print(
-                f"{now_str} [Page {page_idx:03d}] Ingested {len(page)} {endpoint} "
+                f"{now_str} [Page {page_idx:03d}] Ingested {len(page)} <{endpoint}> "
                 f"-> committed {committed} rows (Total: {total_items})"
             )
 
-    print(f"\n[Completed] Backfilled {total_items} items from '{endpoint}'.")
+    print(f"\n[Completed] Backfilled {total_items} items from <{endpoint}>.")
 
 
 def run_forward_fill(
@@ -180,7 +183,7 @@ def run_forward_fill(
             total_committed += committed
             now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
             print(
-                f"{now_str} [Page {page_idx:02d}] Ingested {len(page)} {endpoint} "
+                f"{now_str} [Page {page_idx:02d}] Ingested {len(page)} <{endpoint}> "
                 f"-> committed {committed} new rows"
             )
 
@@ -190,7 +193,7 @@ def run_forward_fill(
 
     if interactive:
         print(
-            f"\n[Completed] Forward fill added {total_committed} new {endpoint} rows."
+            f"\n[Completed] Forward fill added {total_committed} new <{endpoint}> rows."
         )
     return total_committed
 
@@ -198,8 +201,8 @@ def run_forward_fill(
 def run_periodic_polling() -> None:
     print("\n--- Option 3: Unattended Periodic Poller ---")
     print("Starting background poller:")
-    print("  - 'plays': Polled every 60 seconds")
-    print("  - 'shows': Polled every 300 seconds (offset by 30 seconds)")
+    print("  - <plays> polled every 60 seconds")
+    print("  - <shows> Polled every 300 seconds (offset by 30 seconds)")
     print("Press Ctrl+C at any time to safely exit.")
 
     plays_interval = 60
@@ -242,15 +245,17 @@ def run_periodic_polling() -> None:
 
 def run_cli() -> None:
     init_db()
+    os.system("cls" if os.name == "nt" else "clear")
 
     while True:
-        print("\n==============================")
-        print("      KEKSPUH INGESTION       ")
-        print("==============================")
+        print("\n=======================================================")
+        print("                   KEKSPUH INGESTION                   ")
+        print("=======================================================")
         print("  [1] Backfill historical data (oldest -> oldest-est)")
         print("  [2] Forward fill new data (newest -> newest-est)")
-        print("  [3] Start polling")
+        print("  [3] Start polling (newest -> new -> new -> ...)")
         print("  [4] Out though the in door")
+        print("=======================================================\n")
 
         choice = prompt_int("Select operation", 1, 4)
 
@@ -262,9 +267,10 @@ def run_cli() -> None:
             run_periodic_polling()
         elif choice == 4:
             print(
-                "Farewell, my brave Hobbits. My work is now finished."
-                "Here at last, on the shores of the sea…comes the end of our Fellowship."
-                "I will not say do not weep, for not all tears are an evil."
+                "\nFarewell, my brave Hobbits. My work is now finished.\n"
+                "Here at last, on the shores of the sea "
+                "comes the end of our Fellowship.\n"
+                "I will not say do not weep, for not all tears are an evil.\n"
             )
             break
 
