@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from kekspuh.models import JsonResultsForDb
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = PROJECT_ROOT / "data" / "kekspuh.sqlite3"
+DB_PATH = PROJECT_ROOT / "data" / "kekspuh.db"
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
 
@@ -585,11 +585,13 @@ def get_latest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
     cursor = conn.cursor()
     if endpoint == "plays":
         cursor.execute(
-            "SELECT airdate FROM play WHERE airdate IS NOT NULL ORDER BY airdate DESC LIMIT 1;"  # noqa: E501
-        )
-    elif endpoint == "shows":
-        cursor.execute(
-            "SELECT start_time FROM show WHERE start_time IS NOT NULL ORDER BY start_time DESC LIMIT 1;"  # noqa: E501
+            """
+            SELECT start_time
+            FROM show
+            WHERE start_time IS NOT NULL AND uri IS NOT NULL
+            ORDER BY start_time DESC
+            LIMIT 1;
+            """
         )
     else:
         return None
