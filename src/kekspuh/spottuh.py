@@ -22,15 +22,17 @@ class SpotifyClient:
     def __init__(self) -> None:
         self.base_url = BASE_URL
 
-    def _get_headers(self) -> dict[str, str]:
+    @staticmethod
+    def _get_headers() -> dict[str, str]:
         token = get_valid_access_token()
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
-    def clean_query_term(self, text: str) -> str:
-        cleaned = re.sub(r"[\(\[].*?[\)\]]", "", text)
+    @staticmethod
+    def clean_query_term(text: str) -> str:
+        cleaned = re.sub(r"[(\[].*?[)\]]", "", text)
         cleaned = re.sub(
             r"\s*-\s*(remaster(ed)?|live|radio edit|bonus track).*",
             "",
@@ -47,22 +49,31 @@ class SpotifyClient:
             base_url=self.base_url, headers=self._get_headers()
         ) as client:
             clean_t = self.clean_query_term(track_name)
-            clean_a = self.clean_query_term(artist_name)
+            clean_a = self.clean_query_term(artist_name) if artist_name else None
 
-            query_p1 = f'track:"{clean_t}" artist:"{clean_a}"'
+            if clean_a:
+                query_p1 = f'track:"{clean_t}" artist:"{clean_a}"'
+                result = self._execute_search(client, query_p1)
+                if result:
+                    return result
+
+                query_p2 = f"{clean_a} {clean_t}"
+                result = self._execute_search(client, query_p2)
+                if result:
+                    return result
+
+                query_p3 = f"{artist_name} {track_name}"
+                return self._execute_search(client, query_p3)
+
+            query_p1 = f'track:"{clean_t}"'
             result = self._execute_search(client, query_p1)
             if result:
                 return result
 
-            query_p2 = f"{clean_a} {clean_t}"
-            result = self._execute_search(client, query_p2)
-            if result:
-                return result
+            return self._execute_search(client, track_name)
 
-            query_p3 = f"{artist_name} {track_name}"
-            return self._execute_search(client, query_p3)
-
-    def _execute_search(self, client: httpx.Client, query: str) -> SpotifyMatch | None:
+    @staticmethod
+    def _execute_search(client: httpx.Client, query: str) -> SpotifyMatch | None:
         resp = client.get(
             "/search",
             params={
@@ -124,7 +135,8 @@ class SpotifyClient:
             recent_uris = self.get_recent_playlist_uris(playlist_id, limit=3)
             if track_uri in recent_uris:
                 print(
-                    f"[Spotify] {track_uri} is already at the top of the playlist. Skipping."
+                    f"[Spotify] {track_uri} is already at the top of the playlist. "
+                    "Skipping."
                 )
                 return
 
@@ -137,7 +149,8 @@ class SpotifyClient:
             )
             add_resp.raise_for_status()
             print(
-                f"[Spotify] Successfully prepended {track_uri} to playlist {playlist_id}"
+                f"[Spotify] Successfully prepended {track_uri} "
+                "to playlist {playlist_id}"
             )
 
             total_tracks = self.get_playlist_track_count(playlist_id)
@@ -147,8 +160,9 @@ class SpotifyClient:
                     client, playlist_id, offset=max_limit, count=excess_count
                 )
 
+    @staticmethod
     def _trim_playlist_bottom(
-        self, client: httpx.Client, playlist_id: str, offset: int, count: int
+        client: httpx.Client, playlist_id: str, offset: int, count: int
     ) -> None:
         resp = client.get(
             f"/playlists/{playlist_id}/items",
@@ -169,5 +183,6 @@ class SpotifyClient:
                 json={"tracks": uris_to_remove},
             )
             print(
-                f"[Spotify] Trimmed {len(uris_to_remove)} overflow tracks from bottom of playlist."
+                f"[Spotify] Trimmed {len(uris_to_remove)} overflow "
+                "tracks from bottom of playlist."
             )
