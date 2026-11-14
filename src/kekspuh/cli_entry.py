@@ -21,6 +21,7 @@ from kekspuh.db_functions import (
 )
 from kekspuh.endpoint_ingest import build_results_package
 from kekspuh.endpoint_jobber import KexpClient
+from kekspuh.spot_match import sync_recent_playlists
 
 ALL_ENDPOINTS: tuple[str, ...] = ("programs", "hosts", "shows", "timeslots", "plays")
 
@@ -230,13 +231,14 @@ def run_periodic_polling() -> None:
                 now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
                 print(f"\n{now_str} [Poller] Checking for new plays...")
                 try:
-                    run_forward_fill(
+                    new_plays = run_forward_fill(
                         endpoint="plays", page_size=10, max_pages=1, interactive=False
                     )
+                    if new_plays > 0:
+                        sync_recent_playlists(recent_limit=15)
                 except Exception as err:
                     print(f"Error polling plays: {err}")
                 last_plays_poll = time.time()
-
             time.sleep(1.0)
 
     except KeyboardInterrupt:

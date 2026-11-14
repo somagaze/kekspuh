@@ -16,6 +16,7 @@ PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 def connect_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA cache_size=-64000;")
     conn.execute("PRAGMA temp_store=MEMORY;")
@@ -190,6 +191,15 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 FOREIGN KEY (artist_ref) REFERENCES artist(artist_ref) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS playlist_entry (
+                playlist_id TEXT NOT NULL,
+                play_id INTEGER NOT NULL,
+                spotify_track_uri TEXT NOT NULL,
+                added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (playlist_id, play_id),
+                FOREIGN KEY (play_id) REFERENCES play(play_id) ON DELETE CASCADE 
+            );
+
             -- DEDUPE --
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_artist_brainz
@@ -219,6 +229,9 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_play_track_ref ON play(track_ref);
             CREATE INDEX IF NOT EXISTS idx_show_program_id ON show(program_id);
             CREATE INDEX IF NOT EXISTS idx_show_start_time ON show(start_time);
+            CREATE INDEX IF NOT EXISTS idx_playlist_entry_playlist_id
+                ON playlist_entry(playlist_id);
+
             """  # noqa: E501
         )
 
@@ -735,3 +748,149 @@ def get_spotify_track_uri(conn: sqlite3.Connection, track_ref: int) -> str | Non
     )
     row = cursor.fetchone()
     return row[0] if row else None
+
+
+def get_recent_plays_for_matching(
+    conn: sqlite3.Connection, limit: int = 25
+) -> list[dict[str, Any]]:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            p.play_id,
+            p.airdate,
+            t.track_ref,
+            t.track_name,
+            a.artist_ref,
+            a.artist_name,
+            al.album_ref,
+            al.album_name,
+            st.spotify_track_uri,
+            pr.name AS program_name,
+            GROUP_CONCAT(h.name, '||') AS host_names
+        FROM (
+            SELECT play_id, airdate, show_id, track_ref
+            FROM play
+            WHERE play_type = 'trackplay'
+              AND track_ref IS NOT NULL
+            ORDER BY airdate DESC
+            LIMIT ?
+        ) p
+        JOIN track t ON p.track_ref = t.track_ref
+        JOIN artist a ON t.artist_ref = a.artist_ref
+        LEFT JOIN album al ON t.album_ref = al.album_ref
+        LEFT JOIN spotify_track st ON t.track_ref = st.track_ref
+        LEFT JOIN show s ON p.show_id = s.show_id
+        LEFT JOIN program pr ON s.program_id = pr.program_id
+        LEFT JOIN show_jx_host sjh ON s.show_id = sjh.show_id
+        LEFT JOIN host h ON sjh.host_id = h.host_id
+        GROUP BY p.play_id
+        ORDER BY p.airdate;
+        """,
+        (limit,),
+    )
+
+    plays: list[dict[str, Any]] = []
+    for row in cursor.fetchall():
+        raw_hosts = row[10]
+        host_list = (
+            [name for name in raw_hosts.split("||") if name] if raw_hosts else []
+        )
+        plays.append(
+            {
+                "play_id": row[0],
+                "airdate": row[1],
+                "track_ref": row[2],
+                "track_name": row[3],
+                "artist_ref": row[4],
+                "artist_name": row[5],
+                "album_ref": row[6],
+                "album_name": row[7],
+                "spotify_track_uri": row[8],
+                "program_name": row[9],
+                "host_names": host_list,
+            }
+        )
+    return plays
+
+
+def save_spotify_match(
+    conn: sqlite3.Connection,
+    *,
+    track_ref: int,
+    track_uri: str,
+    track_name: str,
+    artist_ref: int,
+    artist_uri: str,
+    artist_name: str,
+    album_ref: int | None,
+    album_uri: str,
+    album_name: str,
+) -> None:
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO spotify_track (track_ref, spotify_track_uri, spotify_track_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(track_ref) DO UPDATE SET
+                spotify_track_uri = excluded.spotify_track_uri,
+                spotify_track_name = excluded.spotify_track_name,
+                matched_at = datetime('now')
+            ON CONFLICT(spotify_track_uri) DO NOTHING;
+            """,
+            (track_ref, track_uri, track_name),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO spotify_artist (artist_ref, spotify_artist_uri, spotify_artist_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(artist_ref) DO UPDATE SET
+                spotify_artist_uri = excluded.spotify_artist_uri,
+                spotify_artist_name = excluded.spotify_artist_name,
+                matched_at = datetime('now')
+            ON CONFLICT(spotify_artist_uri) DO NOTHING;
+            """,
+            (artist_ref, artist_uri, artist_name),
+        )
+
+        if album_ref is not None:
+            conn.execute(
+                """
+                INSERT INTO spotify_album (album_ref, spotify_album_uri, spotify_album_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT(album_ref) DO UPDATE SET
+                    spotify_album_uri = excluded.spotify_album_uri,
+                    spotify_album_name = excluded.spotify_album_name,
+                    matched_at = datetime('now')
+                ON CONFLICT(spotify_album_uri) DO NOTHING;
+                """,
+                (album_ref, album_uri, album_name),
+            )
+
+
+def is_play_in_playlist(
+    conn: sqlite3.Connection, playlist_id: str, play_id: int
+) -> bool:
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM playlist_entry WHERE playlist_id = ? AND play_id = ? LIMIT 1;",
+        (playlist_id, play_id),
+    )
+    return cursor.fetchone() is not None
+
+
+def record_playlist_entry(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+    play_id: int,
+    spotify_track_uri: str,
+) -> None:
+    with conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO playlist_entry (playlist_id, play_id, spotify_track_uri)
+            VALUES (?, ?, ?);
+            """,
+            (playlist_id, play_id, spotify_track_uri),
+        )
