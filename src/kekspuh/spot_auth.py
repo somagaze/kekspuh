@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
 
+load_dotenv()
 CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
@@ -28,7 +30,7 @@ class AuthState:
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:  # noqa N802
         parsed_url = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(parsed_url.query)
 
@@ -159,7 +161,8 @@ def _refresh_access_token(refresh_token: str) -> dict[str, Any] | None:
             _purge_token_store()
             return None
         raise RuntimeError(
-            f"Token refresh request failed: {data.get('error_description', data.get('error'))}"
+            "Token refresh request failed: "
+            f"{data.get('error_description', data.get('error'))}"
         )
 
     now = time.time()
