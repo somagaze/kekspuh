@@ -19,7 +19,8 @@
     "containerEnv": {
         "PIP_REQUIRE_VIRTUALENV": "true",
         "UV_PROJECT_ENVIRONMENT": "${containerWorkspaceFolder}/.venv",
-        "SHELL": "/bin/zsh"
+        "SHELL": "/bin/zsh",
+        "TZ": "America/Los_Angeles"
     },
     "customizations": {
         "jetbrains": {

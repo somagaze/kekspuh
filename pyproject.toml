@@ -9,7 +9,7 @@ dependencies = [
     "pyrefly>=0.60.0",
     "pytest>=9.2.0",
     "python-dotenv>=1.2.4",
-    "ruff>=0.17.3",
+    "ruff==0.17.5",
 ]
 
 [project.scripts]
@@ -21,9 +21,3 @@ build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 88
-
-[tool.ruff.lint]
-extend-select = [
-    "A",
-    "E501"
-]
