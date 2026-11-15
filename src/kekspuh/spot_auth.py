@@ -30,7 +30,7 @@ class AuthState:
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa N802
+    def do_GET(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(parsed_url.query)
 
@@ -48,7 +48,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"Authorization failed. No code parameter detected.")
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: Any) -> None:
         return
 
 
