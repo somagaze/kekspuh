@@ -37,8 +37,9 @@ class KexpClient:
                 resp.raise_for_status()
                 data = resp.json()
                 results: list[dict[str, Any]] = data.get("results") or []
-                if results:
-                    yield results
+                if not results:
+                    break
+                yield results
 
                 url = data.get("next")
                 pages_fetched += 1

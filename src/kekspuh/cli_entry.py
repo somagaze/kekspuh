@@ -187,6 +187,7 @@ def _forward_fill_single_endpoint(
 
         if committed == 0:
             print(f"[{endpoint}] Hit full pages of duplicate. Catch-up complete.")
+            break
 
     return total_committed
 
