@@ -24,7 +24,6 @@ class PlaylistRule:
     host_name: str | None = None
 
     def matches(self, play: dict[str, Any]) -> bool:
-        """Returns True if the play satisfies this playlist's program/host criteria."""
         if self.program_name is not None:
             play_program = (play.get("program_name") or "").strip().lower()
             if play_program != self.program_name.strip().lower():
@@ -73,7 +72,7 @@ PLAYLIST_RULES: tuple[PlaylistRule, ...] = (
 
 
 def sync_recent_playlists(
-    recent_limit: int = 15,
+    recent_limit: int = 20,
     rules: tuple[PlaylistRule, ...] = PLAYLIST_RULES,
 ) -> int:
     if not rules:
@@ -88,8 +87,6 @@ def sync_recent_playlists(
     if not recent_plays:
         return 0
 
-    # Cache newly matched track_ref -> track_uri within this run
-    # in case the same song spun twice inside the same batch.
     session_uri_cache: dict[int, str] = {}
 
     for play in recent_plays:
@@ -98,7 +95,6 @@ def sync_recent_playlists(
         track_name: str = play["track_name"]
         artist_name: str = play["artist_name"]
 
-        # 1. Resolve Spotify URI (DB cache -> session cache -> Spotify API)
         track_uri: str | None = play["spotify_track_uri"] or session_uri_cache.get(
             track_ref
         )
@@ -109,7 +105,7 @@ def sync_recent_playlists(
                 print(f"[Matcher] No Spotify match: '{track_name}' by '{artist_name}'")
                 continue
 
-            track_uri = match.track_uri
+            track_uri: str = match.track_uri
             session_uri_cache[track_ref] = track_uri
 
             with connect_db() as conn:
@@ -128,9 +124,8 @@ def sync_recent_playlists(
             print(
                 f"[Matcher] Matched '{track_name}' -> {match.track_name} ({track_uri})"
             )
-            time.sleep(0.5)  # Gentle pacing on Spotify Search API
+            time.sleep(0.5)
 
-        # 2. Fan out to every matching playlist rule
         for rule in rules:
             if not rule.matches(play):
                 continue
