@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
+import sqlite3
 import time
 from datetime import datetime
 from typing import Any
+
+import httpx
 
 from kekspuh.db_functions import (
     PACIFIC_TZ,
@@ -69,16 +71,21 @@ def process_batch(conn: Any, endpoint: str, results: list[dict[str, Any]]) -> in
                 if isinstance(entity_id, int):
                     save_raw_payload(conn, endpoint, entity_id, json.dumps(item))
 
-                if endpoint == "hosts":
+                if endpoint == "shows":
+                    cur = conn.execute(
+                        "SELECT 1 FROM show WHERE show_id = ? AND uri IS NOT NULL;",
+                        (entity_id,),
+                    )
+                    already_complete = cur.fetchone() is not None
+                    save_show(conn, item)
+                    if not already_complete:
+                        new_inserts += 1
+                elif endpoint == "hosts":
                     save_host(conn, item)
                 elif endpoint == "programs":
                     save_program(conn, item)
-                elif endpoint == "shows":
-                    save_show(conn, item)
                 elif endpoint == "timeslots":
                     save_timeslot(conn, item)
-            new_inserts = len(results)
-
     return new_inserts
 
 
@@ -147,56 +154,75 @@ def run_backfill() -> None:
     print(f"\n[Completed] Backfilled {total_items} items from <{endpoint}>.")
 
 
-def run_forward_fill(
-    endpoint: str | None = None,
-    page_size: int = 20,
-    max_pages: int = 5,
-    interactive: bool = True,
+def _forward_fill_single_endpoint(
+    conn: Any,
+    client: KexpClient,
+    endpoint: str,
+    page_size: int = 50,
+    max_pages: int = 500,
 ) -> int:
-    if interactive:
-        print("\n--- Option 2: Incremental Forward Fill ---")
-        endpoint = prompt_endpoint()
-        page_size = prompt_int("Page size (limit)", 1, 20)
-        max_pages = prompt_int("Max pages to fetch", 1, 5)
+    latest_ts = get_latest_timestamp(conn, endpoint)
+    params: dict[str, Any] = {}
 
-    if endpoint is None:
-        endpoint = "plays"
+    if latest_ts:
+        if endpoint == "plays":
+            params["airdate_after"] = latest_ts
+        elif endpoint == "shows":
+            params["start_time_after"] = latest_ts
 
     total_committed = 0
+    for page_idx, page in enumerate(
+        client.paginate_endpoint(
+            endpoint, limit=page_size, max_pages=max_pages, params=params
+        ),
+        start=1,
+    ):
+        committed = process_batch(conn, endpoint, page)
+        total_committed += committed
+        now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
+        print(
+            f"{now_str} [{endpoint}] [Page {page_idx:02d}] Ingested {len(page)} items "
+            f"-> committed {committed} new rows"
+        )
+
+        if committed == 0:
+            print(f"[{endpoint}] Hit full pages of duplicate. Catch-up complete.")
+
+    return total_committed
+
+
+def run_forward_fill(
+    endpoints: tuple[str, ...] = ("shows", "plays"),
+    page_size: int = 50,
+    max_pages: int = 500,
+    interactive: bool = True,
+) -> dict[str, int]:
+    if interactive:
+        print("\n--- Option 2: Incremental Forward Fill (Shows + Plays) ---")
+
+    results_by_endpoint: dict[str, int] = {}
+    client = KexpClient()
+
     with connect_db() as conn:
-        latest_ts = get_latest_timestamp(conn, endpoint)
-        params: dict[str, Any] = {}
-
-        if latest_ts:
-            if endpoint == "plays":
-                params["airdate_after"] = latest_ts
-            elif endpoint == "shows":
-                params["start_time_after"] = latest_ts
-
-        client = KexpClient()
-        for page_idx, page in enumerate(
-            client.paginate_endpoint(
-                endpoint, limit=page_size, max_pages=max_pages, params=params
-            ),
-            start=1,
-        ):
-            committed = process_batch(conn, endpoint, page)
-            total_committed += committed
-            now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
-            print(
-                f"{now_str} [Page {page_idx:02d}] Ingested {len(page)} <{endpoint}> "
-                f"-> committed {committed} new rows"
+        for ep in endpoints:
+            results_by_endpoint[ep] = _forward_fill_single_endpoint(
+                conn=conn,
+                client=client,
+                endpoint=ep,
+                page_size=page_size,
+                max_pages=max_pages,
             )
 
-            if endpoint == "plays" and committed == 0:
-                print("Forward fill reached previously stored plays. Stopping early.")
-                break
-
     if interactive:
-        print(
-            f"\n[Completed] Forward fill added {total_committed} new <{endpoint}> rows."
+        summary = ", ".join(
+            f"{ep}: +{count}" for ep, count in results_by_endpoint.items()
         )
-    return total_committed
+        print(f"\n[Completed] Forward Fill Finished ({summary}).")
+        new_plays = results_by_endpoint.get("plays", 0)
+        if new_plays > 0:
+            sync_recent_playlists(recent_limit=min(new_plays + 5, 200))
+
+    return results_by_endpoint
 
 
 def run_periodic_polling() -> None:
@@ -221,9 +247,12 @@ def run_periodic_polling() -> None:
                 print(f"\n{now_str} [Poller] Checking for updated shows...")
                 try:
                     run_forward_fill(
-                        endpoint="shows", page_size=5, max_pages=1, interactive=False
+                        endpoints=("shows",),
+                        page_size=20,
+                        max_pages=50,
+                        interactive=False,
                     )
-                except Exception as err:
+                except (httpx.HTTPError, sqlite3.OperationalError, OSError) as err:
                     print(f"Error polling shows: {err}")
                 last_shows_poll = time.time()
 
@@ -231,12 +260,15 @@ def run_periodic_polling() -> None:
                 now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
                 print(f"\n{now_str} [Poller] Checking for new plays...")
                 try:
-                    new_plays = run_forward_fill(
-                        endpoint="plays", page_size=10, max_pages=1, interactive=False
+                    counts = run_forward_fill(
+                        endpoints=("plays",),
+                        page_size=20,
+                        max_pages=100,
+                        interactive=False,
                     )
-                    if new_plays > 0:
-                        sync_recent_playlists(recent_limit=15)
-                except Exception as err:
+                    if counts.get("plays", 0) > 0:
+                        sync_recent_playlists(recent_limit=20)
+                except (httpx.HTTPError, sqlite3.OperationalError, OSError) as err:
                     print(f"Error polling plays: {err}")
                 last_plays_poll = time.time()
             time.sleep(1.0)
@@ -247,14 +279,13 @@ def run_periodic_polling() -> None:
 
 def run_cli() -> None:
     init_db()
-    os.system("cls" if os.name == "nt" else "clear")
 
     while True:
         print("\n=======================================================")
         print("                   KEKSPUH INGESTION                   ")
         print("=======================================================")
-        print("  [1] Backfill historical data (oldest -> oldest-est)")
-        print("  [2] Forward fill new data (newest -> newest-est)")
+        print("  [1] Backfill historical (oldest -> oldest-est)")
+        print("  [2] Forward fill new (newest -> newest-est)")
         print("  [3] Start polling (newest -> new -> new -> ...)")
         print("  [4] Out though the in door")
         print("=======================================================\n")
@@ -269,10 +300,10 @@ def run_cli() -> None:
             run_periodic_polling()
         elif choice == 4:
             print(
-                "\nFarewell, my brave Hobbits. My work is now finished.\n"
-                "Here at last, on the shores of the sea "
-                "comes the end of our Fellowship.\n"
-                "I will not say do not weep, for not all tears are an evil.\n"
+                "\nFarewell, my brave Hobbits. My work is now finished."
+                "\nHere at last, on the shores of the sea "
+                "comes the end of our Fellowship."
+                "\nI will not say do not weep, for not all tears are an evil.\n"
             )
             break
 
