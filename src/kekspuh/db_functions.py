@@ -65,7 +65,9 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 location INTEGER,
                 location_name TEXT,
                 uri TEXT,
-                FOREIGN KEY (program_id) REFERENCES program(program_id) ON DELETE SET NULL
+                FOREIGN KEY (program_id)
+                    REFERENCES program(program_id)
+                    ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS show_jx_host (
@@ -86,14 +88,18 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 end_time TEXT NOT NULL,
                 duration TEXT,
                 uri TEXT,
-                FOREIGN KEY (program_id) REFERENCES program(program_id) ON DELETE CASCADE
+                FOREIGN KEY (program_id)
+                    REFERENCES program(program_id)
+                    ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS timeslot_jx_host (
                 timeslot_id INTEGER NOT NULL,
                 host_id INTEGER NOT NULL,
                 PRIMARY KEY (timeslot_id, host_id),
-                FOREIGN KEY (timeslot_id) REFERENCES timeslot(timeslot_id) ON DELETE CASCADE,
+                FOREIGN KEY (timeslot_id)
+                    REFERENCES timeslot(timeslot_id)
+                    ON DELETE CASCADE,
                 FOREIGN KEY (host_id) REFERENCES host(host_id) ON DELETE CASCADE
             );
 
@@ -119,8 +125,12 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 release_group_brainz TEXT,
                 artist_ref INTEGER NOT NULL,
                 label_ref INTEGER,
-                FOREIGN KEY (artist_ref) REFERENCES artist(artist_ref) ON DELETE RESTRICT,
-                FOREIGN KEY (label_ref) REFERENCES label(label_ref) ON DELETE SET NULL
+                FOREIGN KEY (artist_ref)
+                    REFERENCES artist(artist_ref)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY (label_ref)
+                    REFERENCES label(label_ref)
+                    ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS track (
@@ -131,8 +141,12 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 release_date TEXT,
                 artist_ref INTEGER NOT NULL,
                 album_ref INTEGER,
-                FOREIGN KEY (artist_ref) REFERENCES artist(artist_ref) ON DELETE RESTRICT,
-                FOREIGN KEY (album_ref) REFERENCES album(album_ref) ON DELETE SET NULL
+                FOREIGN KEY (artist_ref)
+                    REFERENCES artist(artist_ref)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY (album_ref)
+                    REFERENCES album(album_ref)
+                    ON DELETE SET NULL
             );
 
             -- TRACKPLAY ENDPOINT: THE PURPOSE OF THE DATABASE --
@@ -220,7 +234,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_track_recording_brainz
                 ON track(recording_brainz) WHERE recording_brainz IS NOT NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_track_composite_fallback
-                ON track(track_name, artist_ref, IFNULL(album_ref, -1)) WHERE recording_brainz IS NULL;
+                ON track(track_name, artist_ref, IFNULL(album_ref, -1))
+                WHERE recording_brainz IS NULL;
 
             -- PERFORMANCE --
 
@@ -231,8 +246,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_show_start_time ON show(start_time);
             CREATE INDEX IF NOT EXISTS idx_playlist_entry_playlist_id
                 ON playlist_entry(playlist_id);
-
-            """  # noqa: E501
+            """
         )
 
 
@@ -275,7 +289,10 @@ def save_host(conn: sqlite3.Connection, host_data: dict[str, Any]) -> None:
 
     conn.execute(
         """
-        INSERT INTO host (host_id, name, image_uri, thumbnail_uri, is_active, location, uri)
+        INSERT INTO host (
+            host_id, name, image_uri, thumbnail_uri,
+            is_active, location, uri
+        )
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(host_id) DO UPDATE SET
             name = excluded.name,
@@ -284,7 +301,7 @@ def save_host(conn: sqlite3.Connection, host_data: dict[str, Any]) -> None:
             is_active = excluded.is_active,
             location = excluded.location,
             uri = excluded.uri;
-        """,  # noqa: E501
+        """,
         (
             host_id,
             host_data.get("name", ""),
@@ -342,7 +359,9 @@ def save_show(conn: sqlite3.Connection, show_data: dict[str, Any]) -> None:
     program_id = show_data.get("program")
     if isinstance(program_id, int):
         conn.execute(
-            "INSERT OR IGNORE INTO program (program_id, name) VALUES (?, ?);",
+            """
+            INSERT OR IGNORE INTO program (program_id, name) VALUES (?, ?);
+            """,
             (program_id, show_data.get("program_name") or "Unknown Program"),
         )
 
@@ -381,11 +400,15 @@ def save_show(conn: sqlite3.Connection, show_data: dict[str, Any]) -> None:
     for host_id in hosts:
         if isinstance(host_id, int):
             conn.execute(
-                "INSERT OR IGNORE INTO host (host_id, name) VALUES (?, ?);",
+                """
+                INSERT OR IGNORE INTO host (host_id, name) VALUES (?, ?);
+                """,
                 (host_id, "Unknown Host"),
             )
             conn.execute(
-                "INSERT OR IGNORE INTO show_jx_host (show_id, host_id) VALUES (?, ?);",
+                """
+                INSERT OR IGNORE INTO show_jx_host (show_id, host_id) VALUES (?, ?);
+                """,
                 (show_id, host_id),
             )
 
@@ -397,7 +420,9 @@ def save_timeslot(conn: sqlite3.Connection, timeslot_data: dict[str, Any]) -> No
         return
 
     conn.execute(
-        "INSERT OR IGNORE INTO program (program_id, name) VALUES (?, ?);",
+        """
+        INSERT OR IGNORE INTO program (program_id, name) VALUES (?, ?);
+        """,
         (program_id, timeslot_data.get("program_name") or "Unknown Program"),
     )
 
@@ -434,11 +459,16 @@ def save_timeslot(conn: sqlite3.Connection, timeslot_data: dict[str, Any]) -> No
     for host_id in hosts:
         if isinstance(host_id, int):
             conn.execute(
-                "INSERT OR IGNORE INTO host (host_id, name) VALUES (?, ?);",
+                """
+                INSERT OR IGNORE INTO host (host_id, name) VALUES (?, ?);
+                """,
                 (host_id, "Unknown Host"),
             )
             conn.execute(
-                "INSERT OR IGNORE INTO timeslot_jx_host (timeslot_id, host_id) VALUES (?, ?);",  # noqa: E501
+                """
+                INSERT OR IGNORE INTO timeslot_jx_host (timeslot_id, host_id)
+                VALUES (?, ?);
+                """,
                 (timeslot_id, host_id),
             )
 
@@ -460,12 +490,16 @@ def resolve_artist(conn: sqlite3.Connection, record: JsonResultsForDb) -> int | 
     )
     if record.artist_brainz:
         cursor.execute(
-            "SELECT artist_ref FROM artist WHERE artist_brainz = ?;",
+            """
+            SELECT artist_ref FROM artist WHERE artist_brainz = ?;
+            """,
             (record.artist_brainz,),
         )
     else:
         cursor.execute(
-            "SELECT artist_ref FROM artist WHERE artist_name = ?;",
+            """
+            SELECT artist_ref FROM artist WHERE artist_name = ?;
+            """,
             (record.artist_name,),
         )
     row = cursor.fetchone()
@@ -485,12 +519,16 @@ def resolve_label(conn: sqlite3.Connection, record: JsonResultsForDb) -> int | N
     )
     if record.label_brainz:
         cursor.execute(
-            "SELECT label_ref FROM label WHERE label_brainz = ?;",
+            """
+            SELECT label_ref FROM label WHERE label_brainz = ?;
+            """,
             (record.label_brainz,),
         )
     else:
         cursor.execute(
-            "SELECT label_ref FROM label WHERE label_name = ?;",
+            """
+            SELECT label_ref FROM label WHERE label_name = ?;
+            """,
             (record.label_name,),
         )
     row = cursor.fetchone()
@@ -546,9 +584,10 @@ def resolve_track(
     cursor.execute(
         """
         INSERT OR IGNORE INTO track (
-            track_name, track_brainz, recording_brainz, release_date, artist_ref, album_ref
+            track_name, track_brainz, recording_brainz,
+            release_date, artist_ref, album_ref
         ) VALUES (?, ?, ?, ?, ?, ?);
-        """,  # noqa: E501
+        """,
         (
             record.track_name,
             record.track_brainz,
@@ -567,8 +606,10 @@ def resolve_track(
         cursor.execute(
             """
             SELECT track_ref FROM track
-            WHERE track_name = ? AND artist_ref = ? AND IFNULL(album_ref, -1) = IFNULL(?, -1);
-            """,  # noqa: E501
+            WHERE track_name = ?
+              AND artist_ref = ?
+              AND IFNULL(album_ref, -1) = IFNULL(?, -1);
+            """,
             (record.track_name, artist_ref, album_ref),
         )
     row = cursor.fetchone()
@@ -576,15 +617,22 @@ def resolve_track(
 
 
 def get_oldest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
-    """Returns the earliest recorded timestamp for pagination backfills."""
     cursor = conn.cursor()
     if endpoint == "plays":
         cursor.execute(
-            "SELECT airdate FROM play WHERE airdate IS NOT NULL ORDER BY airdate LIMIT 1;"  # noqa: E501
+            """
+            SELECT airdate FROM play
+            WHERE airdate IS NOT NULL
+            ORDER BY airdate LIMIT 1;
+            """
         )
     elif endpoint == "shows":
         cursor.execute(
-            "SELECT start_time FROM show WHERE start_time IS NOT NULL ORDER BY start_time LIMIT 1;"  # noqa: E501
+            """
+            SELECT start_time FROM show
+            WHERE start_time IS NOT NULL
+            ORDER BY start_time LIMIT 1;
+            """
         )
     else:
         return None
@@ -594,7 +642,6 @@ def get_oldest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
 
 
 def get_latest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
-    """Returns the newest recorded timestamp for forward-filling."""
     cursor = conn.cursor()
     if endpoint == "plays":
         cursor.execute(
@@ -620,7 +667,6 @@ def get_latest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
 
 
 def get_latest_play(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """Retrieves the newest music play joined with its resolved metadata."""
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -731,7 +777,6 @@ def save_spotify_track_match(
     spotify_uri: str,
     spotify_name: str | None = None,
 ) -> None:
-    """Saves or updates Spotify track URI link."""
     conn.execute(
         """
         INSERT INTO spotify_track (track_ref, spotify_track_uri, spotify_track_name)
@@ -746,10 +791,11 @@ def save_spotify_track_match(
 
 
 def get_spotify_track_uri(conn: sqlite3.Connection, track_ref: int) -> str | None:
-    """Fetches mapped Spotify URI for a track_ref if previously discovered."""
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT spotify_track_uri FROM spotify_track WHERE track_ref = ?;",
+        """
+        SELECT spotify_track_uri FROM spotify_track WHERE track_ref = ?;
+        """,
         (track_ref,),
     )
     row = cursor.fetchone()
@@ -790,7 +836,7 @@ def get_recent_plays_for_matching(
         LEFT JOIN program pr ON s.program_id = pr.program_id
         LEFT JOIN show_jx_host sjh ON s.show_id = sjh.show_id
         LEFT JOIN host h ON sjh.host_id = h.host_id
-        GROUP BY p.play_id
+        GROUP BY p.play_id, p.airdate
         ORDER BY p.airdate;
         """,
         (limit,),
@@ -836,26 +882,20 @@ def save_spotify_match(
     with conn:
         conn.execute(
             """
-            INSERT INTO spotify_track (track_ref, spotify_track_uri, spotify_track_name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(track_ref) DO UPDATE SET
-                spotify_track_uri = excluded.spotify_track_uri,
-                spotify_track_name = excluded.spotify_track_name,
-                matched_at = datetime('now')
-            ON CONFLICT(spotify_track_uri) DO NOTHING;
+            INSERT OR IGNORE INTO spotify_track (
+                track_ref, spotify_track_uri, spotify_track_name
+            )
+            VALUES (?, ?, ?);
             """,
             (track_ref, track_uri, track_name),
         )
 
         conn.execute(
             """
-            INSERT INTO spotify_artist (artist_ref, spotify_artist_uri, spotify_artist_name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(artist_ref) DO UPDATE SET
-                spotify_artist_uri = excluded.spotify_artist_uri,
-                spotify_artist_name = excluded.spotify_artist_name,
-                matched_at = datetime('now')
-            ON CONFLICT(spotify_artist_uri) DO NOTHING;
+            INSERT OR IGNORE INTO spotify_artist (
+                artist_ref, spotify_artist_uri, spotify_artist_name
+            )
+            VALUES (?, ?, ?);
             """,
             (artist_ref, artist_uri, artist_name),
         )
@@ -863,13 +903,10 @@ def save_spotify_match(
         if album_ref is not None:
             conn.execute(
                 """
-                INSERT INTO spotify_album (album_ref, spotify_album_uri, spotify_album_name)
-                VALUES (?, ?, ?)
-                ON CONFLICT(album_ref) DO UPDATE SET
-                    spotify_album_uri = excluded.spotify_album_uri,
-                    spotify_album_name = excluded.spotify_album_name,
-                    matched_at = datetime('now')
-                ON CONFLICT(spotify_album_uri) DO NOTHING;
+                INSERT OR IGNORE INTO spotify_album (
+                    album_ref, spotify_album_uri, spotify_album_name
+                )
+                VALUES (?, ?, ?);
                 """,
                 (album_ref, album_uri, album_name),
             )
@@ -880,7 +917,11 @@ def is_play_in_playlist(
 ) -> bool:
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT 1 FROM playlist_entry WHERE playlist_id = ? AND play_id = ? LIMIT 1;",
+        """
+        SELECT 1 FROM playlist_entry
+        WHERE playlist_id = ? AND play_id = ?
+        LIMIT 1;
+        """,
         (playlist_id, play_id),
     )
     return cursor.fetchone() is not None
@@ -895,7 +936,9 @@ def record_playlist_entry(
     with conn:
         conn.execute(
             """
-            INSERT OR IGNORE INTO playlist_entry (playlist_id, play_id, spotify_track_uri)
+            INSERT OR IGNORE INTO playlist_entry (
+                playlist_id, play_id, spotify_track_uri
+            )
             VALUES (?, ?, ?);
             """,
             (playlist_id, play_id, spotify_track_uri),
