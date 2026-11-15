@@ -599,11 +599,17 @@ def get_latest_timestamp(conn: sqlite3.Connection, endpoint: str) -> str | None:
     if endpoint == "plays":
         cursor.execute(
             """
-            SELECT start_time
-            FROM show
+            SELECT airdate FROM play
+            WHERE airdate IS NOT NULL
+            ORDER BY airdate DESC LIMIT 1;
+            """
+        )
+    elif endpoint == "shows":
+        cursor.execute(
+            """
+            SELECT start_time FROM show
             WHERE start_time IS NOT NULL AND uri IS NOT NULL
-            ORDER BY start_time DESC
-            LIMIT 1;
+            ORDER BY start_time DESC LIMIT 1;
             """
         )
     else:
