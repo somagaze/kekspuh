@@ -247,6 +247,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_show_start_time ON show(start_time);
             CREATE INDEX IF NOT EXISTS idx_playlist_entry_playlist_id
                 ON playlist_entry(playlist_id);
+            CREATE INDEX IF NOT EXISTS idx_play_type_airdate_track
+                ON play(play_type, airdate DESC, track_ref);
             """
         )
 
@@ -894,8 +896,17 @@ def get_unmatched_tracks(
             (limit,),
         )
     else:
+        recent_window = max(limit * 25, 5000)
         cursor.execute(
             """
+            WITH recent_plays AS (
+                SELECT track_ref, airdate
+                FROM play
+                WHERE play_type = 'trackplay'
+                  AND track_ref IS NOT NULL
+                ORDER BY airdate DESC
+                LIMIT ?
+            )
             SELECT
                 t.track_ref,
                 t.track_name,
@@ -903,20 +914,54 @@ def get_unmatched_tracks(
                 a.artist_name,
                 al.album_ref,
                 al.album_name,
-                MAX(p.airdate) AS latest_airdate
-            FROM track t
-            JOIN play p ON p.track_ref = t.track_ref
+                MAX(rp.airdate) AS latest_airdate
+            FROM recent_plays rp
+            JOIN track t ON rp.track_ref = t.track_ref
             JOIN artist a ON t.artist_ref = a.artist_ref
             LEFT JOIN album al ON t.album_ref = al.album_ref
             LEFT JOIN spotify_track st ON t.track_ref = st.track_ref
-            WHERE p.play_type = 'trackplay'
-              AND st.track_ref IS NULL
+            WHERE st.track_ref IS NULL
             GROUP BY t.track_ref
             ORDER BY latest_airdate DESC
             LIMIT ?;
             """,
-            (limit,),
+            (recent_window, limit),
         )
+        rows = cursor.fetchall()
+
+        # Fallback to full table scan only once the most recent window is 100% matched
+        if not rows:
+            cursor.execute(
+                """
+                SELECT
+                    t.track_ref,
+                    t.track_name,
+                    a.artist_ref,
+                    a.artist_name,
+                    al.album_ref,
+                    al.album_name
+                FROM track t
+                JOIN artist a ON t.artist_ref = a.artist_ref
+                LEFT JOIN album al ON t.album_ref = al.album_ref
+                LEFT JOIN spotify_track st ON t.track_ref = st.track_ref
+                WHERE st.track_ref IS NULL
+                LIMIT ?;
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+
+        return [
+            {
+                "track_ref": row[0],
+                "track_name": row[1],
+                "artist_ref": row[2],
+                "artist_name": row[3],
+                "album_ref": row[4],
+                "album_name": row[5],
+            }
+            for row in rows
+        ]
 
     return [
         {
