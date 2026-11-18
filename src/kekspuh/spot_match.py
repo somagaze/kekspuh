@@ -5,12 +5,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from kekspuh.db_functions import (
+    NOT_FOUND_PREFIX,
     connect_db,
     get_recent_plays_for_matching,
+    get_unmatched_tracks,
     init_db,
+    is_not_found_uri,
     is_play_in_playlist,
     record_playlist_entry,
     save_spotify_match,
+    save_spotify_not_found,
 )
 from kekspuh.spottuh import SpotifyClient
 
@@ -95,14 +99,23 @@ def sync_recent_playlists(
         track_name: str = play["track_name"]
         artist_name: str = play["artist_name"]
 
-        track_uri: str | None = play["spotify_track_uri"] or session_uri_cache.get(
+        cached_uri: str | None = play["spotify_track_uri"] or session_uri_cache.get(
             track_ref
         )
 
-        if not track_uri:
+        if is_not_found_uri(cached_uri):
+            continue
+
+        if cached_uri is None:
             match = spotify.search_track(track_name, artist_name)
             if not match:
-                print(f"[Matcher] No Spotify match: '{track_name}' by '{artist_name}'")
+                print(
+                    f"[Matcher] No Spotify match (marked NOT FOUND): "
+                    f"'{track_name}' by '{artist_name}'"
+                )
+                session_uri_cache[track_ref] = f"{NOT_FOUND_PREFIX}{track_ref}"
+                with connect_db() as conn:
+                    save_spotify_not_found(conn, track_ref)
                 continue
 
             track_uri: str = match.track_uri
@@ -125,6 +138,11 @@ def sync_recent_playlists(
                 f"[Matcher] Matched '{track_name}' -> {match.track_name} ({track_uri})"
             )
             time.sleep(0.5)
+        else:
+            track_uri: str = cached_uri
+
+        if is_not_found_uri(track_uri):
+            continue
 
         for rule in rules:
             if not rule.matches(play):
@@ -149,6 +167,68 @@ def sync_recent_playlists(
             print(f"[Playlist: {rule.name}] Added '{track_name}' (play_id={play_id})")
 
     return additions_made
+
+
+def match_unmatched_tracks(
+    batch_limit: int = 100,
+    recheck_not_found: bool = False,
+) -> int:
+    spotify = SpotifyClient()
+    matched_count = 0
+    not_found_count = 0
+
+    with connect_db() as conn:
+        candidates = get_unmatched_tracks(
+            conn, limit=batch_limit, include_not_found=recheck_not_found
+        )
+
+    if not candidates:
+        print("[Matcher] No candidate tracks found to process.")
+        return 0
+
+    for idx, item in enumerate(candidates, start=1):
+        track_ref: int = item["track_ref"]
+        track_name: str = item["track_name"]
+        artist_name: str = item["artist_name"]
+
+        match = spotify.search_track(track_name, artist_name)
+        if not match:
+            not_found_count += 1
+            with connect_db() as conn:
+                save_spotify_not_found(conn, track_ref)
+            print(
+                f"[Matcher] ({idx}/{len(candidates)}) NOT FOUND: "
+                f"'{track_name}' by '{artist_name}'"
+            )
+            time.sleep(0.5)
+            continue
+
+        with connect_db() as conn:
+            save_spotify_match(
+                conn,
+                track_ref=track_ref,
+                track_uri=match.track_uri,
+                track_name=match.track_name,
+                artist_ref=item["artist_ref"],
+                artist_uri=match.artist_uri,
+                artist_name=match.artist_name,
+                album_ref=item["album_ref"],
+                album_uri=match.album_uri,
+                album_name=match.album_name,
+            )
+
+        matched_count += 1
+        print(
+            f"[Matcher] ({idx}/{len(candidates)}) MATCHED: "
+            f"'{track_name}' -> {match.track_name} ({match.track_uri})"
+        )
+        time.sleep(0.5)
+
+    print(
+        f"[Matcher] Batch summary: {matched_count} matched, "
+        f"{not_found_count} marked NOT FOUND."
+    )
+    return matched_count
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from kekspuh.models import JsonResultsForDb
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = PROJECT_ROOT / "data" / "kekspuh.db"
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+NOT_FOUND_PREFIX = "NOT_FOUND:"
 
 
 def connect_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
@@ -866,6 +867,93 @@ def get_recent_plays_for_matching(
     return plays
 
 
+def get_unmatched_tracks(
+    conn: sqlite3.Connection,
+    limit: int = 100,
+    include_not_found: bool = False,
+) -> list[dict[str, Any]]:
+    cursor = conn.cursor()
+    if include_not_found:
+        cursor.execute(
+            """
+            SELECT
+                t.track_ref,
+                t.track_name,
+                a.artist_ref,
+                a.artist_name,
+                al.album_ref,
+                al.album_name
+            FROM spotify_track st
+            JOIN track t ON st.track_ref = t.track_ref
+            JOIN artist a ON t.artist_ref = a.artist_ref
+            LEFT JOIN album al ON t.album_ref = al.album_ref
+            WHERE st.spotify_track_uri LIKE 'NOT_FOUND:%'
+            ORDER BY st.matched_at
+            LIMIT ?;
+            """,
+            (limit,),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT
+                t.track_ref,
+                t.track_name,
+                a.artist_ref,
+                a.artist_name,
+                al.album_ref,
+                al.album_name,
+                MAX(p.airdate) AS latest_airdate
+            FROM track t
+            JOIN play p ON p.track_ref = t.track_ref
+            JOIN artist a ON t.artist_ref = a.artist_ref
+            LEFT JOIN album al ON t.album_ref = al.album_ref
+            LEFT JOIN spotify_track st ON t.track_ref = st.track_ref
+            WHERE p.play_type = 'trackplay'
+              AND st.track_ref IS NULL
+            GROUP BY t.track_ref
+            ORDER BY latest_airdate DESC
+            LIMIT ?;
+            """,
+            (limit,),
+        )
+
+    return [
+        {
+            "track_ref": row[0],
+            "track_name": row[1],
+            "artist_ref": row[2],
+            "artist_name": row[3],
+            "album_ref": row[4],
+            "album_name": row[5],
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def is_not_found_uri(uri: str | None) -> bool:
+    return bool(uri and uri.startswith(NOT_FOUND_PREFIX))
+
+
+def save_spotify_not_found(conn: sqlite3.Connection, track_ref: int) -> None:
+    sentinel_uri = f"{NOT_FOUND_PREFIX}{track_ref}"
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO spotify_track (
+                track_ref, spotify_track_uri, spotify_track_name
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(track_ref) DO UPDATE SET
+                spotify_track_uri = excluded.spotify_track_uri,
+                spotify_track_name = excluded.spotify_track_name,
+                matched_at = datetime('now')
+            WHERE spotify_track.spotify_track_uri LIKE 'NOT_FOUND:%';
+            """,
+            (track_ref, sentinel_uri, "NOT FOUND"),
+        )
+
+
 def save_spotify_match(
     conn: sqlite3.Connection,
     *,
@@ -882,10 +970,15 @@ def save_spotify_match(
     with conn:
         conn.execute(
             """
-            INSERT OR IGNORE INTO spotify_track (
+            INSERT INTO spotify_track (
                 track_ref, spotify_track_uri, spotify_track_name
             )
-            VALUES (?, ?, ?);
+            VALUES (?, ?, ?)
+            ON CONFLICT(track_ref) DO UPDATE SET
+                spotify_track_uri = excluded.spotify_track_uri,
+                spotify_track_name = excluded.spotify_track_name,
+                matched_at = datetime('now')
+            WHERE spotify_track.spotify_track_uri LIKE 'NOT_FOUND:%';
             """,
             (track_ref, track_uri, track_name),
         )

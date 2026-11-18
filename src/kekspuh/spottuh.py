@@ -1,5 +1,7 @@
 import re
+import time
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -72,15 +74,12 @@ class SpotifyClient:
 
             return self._execute_search(client, track_name)
 
-    @staticmethod
-    def _execute_search(client: httpx.Client, query: str) -> SpotifyMatch | None:
-        resp = client.get(
+    def _execute_search(self, client: httpx.Client, query: str) -> SpotifyMatch | None:
+        resp = self._request_with_retry(
+            client,
+            "GET",
             "/search",
-            params={
-                "q": query,
-                "type": "track",
-                "limit": 5,
-            },
+            params={"q": query, "type": "track", "limit": 5},
         )
         if resp.is_error:
             return None
@@ -103,68 +102,48 @@ class SpotifyClient:
             album_name=album["name"],
         )
 
-    def get_playlist_track_count(self, playlist_id: str) -> int:
-        with httpx.Client(
-            base_url=self.base_url, headers=self._get_headers()
-        ) as client:
-            resp = client.get(f"/playlists/{playlist_id}?fields=tracks.total")
-            resp.raise_for_status()
-            return resp.json().get("tracks", {}).get("total", 0)
-
-    def get_recent_playlist_uris(self, playlist_id: str, limit: int = 10) -> set[str]:
-        with httpx.Client(
-            base_url=self.base_url, headers=self._get_headers()
-        ) as client:
-            resp = client.get(
-                f"/playlists/{playlist_id}/items",
-                params={"limit": limit, "fields": "items(track(uri))"},
-            )
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            return {
-                item["track"]["uri"]
-                for item in items
-                if item.get("track") and item["track"].get("uri")
-            }
+    def _get_playlist_track_count(self, client: httpx.Client, playlist_id: str) -> int:
+        resp = self._request_with_retry(
+            client,
+            "GET",
+            f"/playlists/{playlist_id}",
+            params={"fields": "tracks.total"},
+        )
+        resp.raise_for_status()
+        return resp.json().get("tracks", {}).get("total", 0)
 
     def add_track_to_top(
         self, playlist_id: str, track_uri: str, max_limit: int = 200
     ) -> None:
         headers = self._get_headers()
         with httpx.Client(base_url=self.base_url, headers=headers) as client:
-            recent_uris = self.get_recent_playlist_uris(playlist_id, limit=3)
-            if track_uri in recent_uris:
-                print(
-                    f"[Spotify] {track_uri} is already at the top of the playlist. "
-                    "Skipping."
-                )
-                return
-
-            add_resp = client.post(
+            add_resp = self._request_with_retry(
+                client,
+                "POST",
                 f"/playlists/{playlist_id}/items",
-                json={
-                    "uris": [track_uri],
-                    "position": 0,
-                },
+                json={"uris": [track_uri], "position": 0},
             )
             add_resp.raise_for_status()
             print(
                 f"[Spotify] Successfully prepended {track_uri} "
-                "to playlist {playlist_id}"
+                f"to playlist {playlist_id}"
             )
 
-            total_tracks = self.get_playlist_track_count(playlist_id)
+            total_tracks = self._get_playlist_track_count(client, playlist_id)
             if total_tracks > max_limit:
                 excess_count = total_tracks - max_limit
                 self._trim_playlist_bottom(
                     client, playlist_id, offset=max_limit, count=excess_count
                 )
 
-    @staticmethod
+            time.sleep(1.0)
+
     def _trim_playlist_bottom(
-        client: httpx.Client, playlist_id: str, offset: int, count: int
+        self, client: httpx.Client, playlist_id: str, offset: int, count: int
     ) -> None:
-        resp = client.get(
+        resp = self._request_with_retry(
+            client,
+            "GET",
             f"/playlists/{playlist_id}/items",
             params={"offset": offset, "limit": count, "fields": "items(track(uri))"},
         )
@@ -177,7 +156,8 @@ class SpotifyClient:
         ]
 
         if uris_to_remove:
-            client.request(
+            self._request_with_retry(
+                client,
                 "DELETE",
                 f"/playlists/{playlist_id}/items",
                 json={"tracks": uris_to_remove},
@@ -186,3 +166,51 @@ class SpotifyClient:
                 f"[Spotify] Trimmed {len(uris_to_remove)} overflow "
                 "tracks from bottom of playlist."
             )
+
+    @staticmethod
+    def _request_with_retry(
+        client: httpx.Client,
+        method: str,
+        url: str,
+        *,
+        max_retries: int = 4,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = client.request(method, url, **kwargs)
+            except httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError:
+                if attempt == max_retries:
+                    raise
+                backoff = 2.0 * attempt
+                print(
+                    f"[Spotify] Connection hiccup (attempt {attempt}/{max_retries}). "
+                    f"Retrying in {backoff}s..."
+                )
+                time.sleep(backoff)
+                continue
+
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 5)) + 1
+                if retry_after > 120:
+                    hours = retry_after / 3600
+                    raise RuntimeError(
+                        f"Spotify extended rate limit active (Retry after: {retry_after}s / ~{hours:.1f}h. "
+                        "Aborting instead of sleeping."
+                    )
+                print(f"[Spotify] Rate limited (429). Sleeping {retry_after}s...")
+                time.sleep(retry_after)
+                continue
+
+            if resp.status_code in (500, 502, 503, 504) and attempt < max_retries:
+                backoff = 2.0 * attempt
+                print(
+                    f"[Spotify] Server error {resp.status_code}. "
+                    f"Retrying in {backoff}s..."
+                )
+                time.sleep(backoff)
+                continue
+
+            return resp
+
+        raise RuntimeError(f"Spotify request failed after {max_retries} attempts.")

@@ -23,7 +23,7 @@ from kekspuh.db_functions import (
 )
 from kekspuh.endpoint_ingest import build_results_package
 from kekspuh.endpoint_jobber import KexpClient
-from kekspuh.spot_match import sync_recent_playlists
+from kekspuh.spot_match import match_unmatched_tracks, sync_recent_playlists
 
 ALL_ENDPOINTS: tuple[str, ...] = ("programs", "hosts", "shows", "timeslots", "plays")
 
@@ -226,6 +226,20 @@ def run_forward_fill(
     return results_by_endpoint
 
 
+def run_spotify_match_only(recheck_not_found: bool = False) -> None:
+    label = (
+        "Option 4: Recheck Spotify NOT FOUND Tracks (DB Only)"
+        if recheck_not_found
+        else "Option 3: Spotify Match Unmatched Tracks (DB Only)"
+    )
+    print(f"\n--- {label} ---")
+    batch_size = prompt_int("How many tracks to process?", 1, 1000)
+    matched = match_unmatched_tracks(
+        batch_limit=batch_size, recheck_not_found=recheck_not_found
+    )
+    print(f"\n[Completed] Matched and saved {matched} track(s) to database.")
+
+
 def run_periodic_polling() -> None:
     print("\n--- Option 3: Unattended Periodic Poller ---")
     print("Starting background poller:")
@@ -253,7 +267,12 @@ def run_periodic_polling() -> None:
                         max_pages=50,
                         interactive=False,
                     )
-                except (httpx.HTTPError, sqlite3.OperationalError, OSError) as err:
+                except (
+                    httpx.HTTPError,
+                    sqlite3.OperationalError,
+                    OSError,
+                    RuntimeError,
+                ) as err:
                     print(f"Error polling shows: {err}")
                 last_shows_poll = time.time()
 
@@ -269,7 +288,12 @@ def run_periodic_polling() -> None:
                     )
                     if counts.get("plays", 0) > 0:
                         sync_recent_playlists(recent_limit=20)
-                except (httpx.HTTPError, sqlite3.OperationalError, OSError) as err:
+                except (
+                    httpx.HTTPError,
+                    sqlite3.OperationalError,
+                    OSError,
+                    RuntimeError,
+                ) as err:
                     print(f"Error polling plays: {err}")
                 last_plays_poll = time.time()
             time.sleep(1.0)
@@ -285,20 +309,20 @@ def run_cli() -> None:
         print("\n=======================================================")
         print("                   KEKSPUH INGESTION                   ")
         print("=======================================================")
-        print("  [1] Backfill historical (oldest -> oldest-est)")
-        print("  [2] Forward fill new (newest -> newest-est)")
-        print("  [3] Start polling (newest -> new -> new -> ...)")
-        print("  [4] Out though the in door")
+        print("  [1] Start polling (live KEXP + Spotify playlists)")
+        print("  [2] Forward fill (catch up KEXP + Spotify playlists)")
+        print("  [3] Spotify match tracks (DB only, no playlist edits)")
+        print("  [4] Out through the in door")
         print("=======================================================\n")
 
         choice = prompt_int("Select operation", 1, 4)
 
         if choice == 1:
-            run_backfill()
+            run_periodic_polling()
         elif choice == 2:
             run_forward_fill()
         elif choice == 3:
-            run_periodic_polling()
+            run_spotify_match_only()
         elif choice == 4:
             print(
                 "\nFarewell, my brave Hobbits. My work is now finished."

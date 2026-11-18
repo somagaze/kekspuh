@@ -33,8 +33,25 @@ class KexpClient:
         with httpx.Client(timeout=self.timeout) as client:
             while url and pages_fetched < max_pages:
                 current_params = query_params if pages_fetched == 0 else None
-                resp = client.get(url, params=current_params)
-                resp.raise_for_status()
+
+                for attempt in range(1, 4):
+                    try:
+                        resp = client.get(url, params=current_params)
+                        resp.raise_for_status()
+                        break
+                    except (
+                        httpx.RemoteProtocolError,
+                        httpx.ReadTimeout,
+                        httpx.ConnectError,
+                    ):
+                        if attempt == 3:
+                            raise
+                        backoff = 2.0 * attempt
+                        print(
+                            f"[KexpClient] Server Dropped Connection (attempt {attempt}/3). Retrying in {backoff}s..."
+                        )
+                        time.sleep(backoff)
+
                 data = resp.json()
                 results: list[dict[str, Any]] = data.get("results") or []
                 if not results:
@@ -43,4 +60,4 @@ class KexpClient:
 
                 url = data.get("next")
                 pages_fetched += 1
-                time.sleep(0.3)
+                time.sleep(0.5)
