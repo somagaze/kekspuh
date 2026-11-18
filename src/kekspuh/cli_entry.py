@@ -241,7 +241,7 @@ def run_spotify_match_only(recheck_not_found: bool = False) -> None:
 
 
 def run_periodic_polling() -> None:
-    print("\n--- Option 3: Unattended Periodic Poller ---")
+    print("\n--- Option 1: Unattended Periodic Poller ---")
     print("Starting background poller:")
     print("  - <plays> polled every 60 seconds")
     print("  - <shows> Polled every 300 seconds (offset by 30 seconds)")
@@ -287,7 +287,7 @@ def run_periodic_polling() -> None:
                         interactive=False,
                     )
                     if counts.get("plays", 0) > 0:
-                        sync_recent_playlists(recent_limit=20)
+                        sync_recent_playlists(recent_limit=15)
                 except (
                     httpx.HTTPError,
                     sqlite3.OperationalError,
@@ -312,10 +312,11 @@ def run_cli() -> None:
         print("  [1] Start polling (live KEXP + Spotify playlists)")
         print("  [2] Forward fill (catch up KEXP + Spotify playlists)")
         print("  [3] Spotify match tracks (DB only, no playlist edits)")
-        print("  [4] Out through the in door")
+        print("  [4] Spotify recheck 'NOT FOUND' matches (DB only, no playlist edits)")
+        print("  [5] Out through the in door")
         print("=======================================================\n")
 
-        choice = prompt_int("Select operation", 1, 4)
+        choice = prompt_int("Select operation", 1, 5)
 
         if choice == 1:
             run_periodic_polling()
@@ -324,6 +325,8 @@ def run_cli() -> None:
         elif choice == 3:
             run_spotify_match_only()
         elif choice == 4:
+            run_spotify_match_only(recheck_not_found=True)
+        elif choice == 5:
             print(
                 "\nFarewell, my brave Hobbits. My work is now finished."
                 "\nHere at last, on the shores of the sea "
