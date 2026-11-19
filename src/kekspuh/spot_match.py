@@ -12,6 +12,7 @@ from kekspuh.db_functions import (
     init_db,
     is_not_found_uri,
     is_play_in_playlist,
+    is_track_recently_in_playlist,
     record_playlist_entry,
     save_spotify_match,
     save_spotify_not_found,
@@ -127,6 +128,7 @@ def sync_recent_playlists(
                     track_ref=track_ref,
                     track_uri=match.track_uri,
                     track_name=match.track_name,
+                    match_tier=match.match_tier,
                     artist_ref=play["artist_ref"],
                     artist_uri=match.artist_uri,
                     artist_name=match.artist_name,
@@ -137,7 +139,7 @@ def sync_recent_playlists(
             print(
                 f"[Matcher] Matched '{track_name}' -> {match.track_name} ({track_uri})"
             )
-            time.sleep(0.5)
+            time.sleep(1.0)
         else:
             track_uri: str = cached_uri
 
@@ -150,8 +152,15 @@ def sync_recent_playlists(
 
             with connect_db() as conn:
                 already_added = is_play_in_playlist(conn, rule.playlist_id, play_id)
+                recently_spun = (
+                    False
+                    if already_added
+                    else is_track_recently_in_playlist(
+                        conn, rule.playlist_id, track_uri, recent_window=20
+                    )
+                )
 
-            if already_added:
+            if already_added or recently_spun:
                 continue
 
             spotify.add_track_to_top(
@@ -200,7 +209,7 @@ def match_unmatched_tracks(
                 f"[Matcher] ({idx}/{len(candidates)}) NOT FOUND: "
                 f"'{track_name}' by '{artist_name}'"
             )
-            time.sleep(0.5)
+            time.sleep(1.0)
             continue
 
         with connect_db() as conn:
@@ -209,6 +218,7 @@ def match_unmatched_tracks(
                 track_ref=track_ref,
                 track_uri=match.track_uri,
                 track_name=match.track_name,
+                match_tier=match.match_tier,
                 artist_ref=item["artist_ref"],
                 artist_uri=match.artist_uri,
                 artist_name=match.artist_name,
@@ -222,7 +232,7 @@ def match_unmatched_tracks(
             f"[Matcher] ({idx}/{len(candidates)}) MATCHED: "
             f"'{track_name}' -> {match.track_name} ({match.track_uri})"
         )
-        time.sleep(0.5)
+        time.sleep(1.0)
 
     print(
         f"[Matcher] Batch summary: {matched_count} matched, "

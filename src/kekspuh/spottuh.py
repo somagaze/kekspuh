@@ -1,6 +1,7 @@
 import re
 import time
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any
 
 import httpx
@@ -18,6 +19,7 @@ class SpotifyMatch:
     artist_name: str
     album_uri: str
     album_name: str
+    match_tier: int
 
 
 class SpotifyClient:
@@ -44,6 +46,23 @@ class SpotifyClient:
         cleaned = re.sub(r'["\']', "", cleaned)
         return cleaned.strip()
 
+    @staticmethod
+    def _artist_similarity(
+        target_artist: str, spotify_artist: list[dict[str, Any]]
+    ) -> float:
+        target = target_artist.strip().lower()
+        best = 0.0
+        for artist in spotify_artist:
+            candidate = (artist.get("name") or "").strip().lower()
+            if not candidate:
+                continue
+            if target in candidate or candidate in target:
+                best = max(best, 0.95)
+            else:
+                ratio = SequenceMatcher(None, target, candidate).ratio()
+                best = max(best, ratio)
+        return best
+
     def search_track(
         self, track_name: str, artist_name: str | None = None
     ) -> SpotifyMatch | None:
@@ -55,26 +74,38 @@ class SpotifyClient:
 
             if clean_a:
                 query_p1 = f'track:"{clean_t}" artist:"{clean_a}"'
-                result = self._execute_search(client, query_p1)
+                result = self._execute_search(
+                    client, query_p1, expected_artist=clean_a, match_tier=1
+                )
                 if result:
                     return result
 
                 query_p2 = f"{clean_a} {clean_t}"
-                result = self._execute_search(client, query_p2)
+                result = self._execute_search(
+                    client, query_p2, expected_artist=clean_a, match_tier=2
+                )
                 if result:
                     return result
 
                 query_p3 = f"{artist_name} {track_name}"
-                return self._execute_search(client, query_p3)
+                return self._execute_search(
+                    client, query_p3, expected_artist=artist_name, match_tier=3
+                )
 
             query_p1 = f'track:"{clean_t}"'
-            result = self._execute_search(client, query_p1)
+            result = self._execute_search(client, query_p1, match_tier=1)
             if result:
                 return result
 
-            return self._execute_search(client, track_name)
+            return self._execute_search(client, track_name, match_tier=3)
 
-    def _execute_search(self, client: httpx.Client, query: str) -> SpotifyMatch | None:
+    def _execute_search(
+        self,
+        client: httpx.Client,
+        query: str,
+        expected_artist: str | None = None,
+        match_tier: int = 1,
+    ) -> SpotifyMatch | None:
         resp = self._request_with_retry(
             client,
             "GET",
@@ -84,22 +115,48 @@ class SpotifyClient:
         if resp.is_error:
             return None
 
-        data = resp.json()
-        items = data.get("tracks", {}).get("items", [])
+        items = resp.json().get("tracks", {}).get("items", [])
         if not items:
             return None
 
-        top_track = items[0]
-        primary_artist = top_track["artists"][0]
-        album = top_track["album"]
+        best_item: dict[str, Any] | None = None
+        best_score = -1.0
+
+        for rank_idx, item in enumerate(items):
+            artists = item.get("artists") or []
+            if not artists:
+                continue
+
+            if expected_artist:
+                sim = self._artist_similarity(expected_artist, artists)
+                if sim < 0.65:
+                    continue
+            else:
+                sim = 1.0
+
+            album_type = (item.get("album") or {}).get("album_type", "")
+            type_bonus = 0.15 if album_type in ("album", "single") else 0.0
+            rank_bonus = (5 - rank_idx) * 0.02
+            score = sim + type_bonus + rank_bonus
+
+            if score > best_score:
+                best_score = score
+                best_item = item
+
+        if not best_item:
+            return None
+
+        primary_artist = best_item["artists"][0]
+        album = best_item["album"]
 
         return SpotifyMatch(
-            track_uri=top_track["uri"],
-            track_name=top_track["name"],
+            track_uri=best_item["uri"],
+            track_name=best_item["name"],
             artist_uri=primary_artist["uri"],
             artist_name=primary_artist["name"],
             album_uri=album["uri"],
             album_name=album["name"],
+            match_tier=match_tier,
         )
 
     def _get_playlist_track_count(self, client: httpx.Client, playlist_id: str) -> int:

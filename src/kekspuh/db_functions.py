@@ -184,7 +184,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
 
             CREATE TABLE IF NOT EXISTS spotify_track (
                 track_ref INTEGER PRIMARY KEY,
-                spotify_track_uri TEXT NOT NULL UNIQUE,
+                match_tier INTEGER,
+                spotify_track_uri TEXT NOT NULL,
                 spotify_track_name TEXT,
                 matched_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (track_ref) REFERENCES track(track_ref) ON DELETE CASCADE
@@ -192,7 +193,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
 
             CREATE TABLE IF NOT EXISTS spotify_album (
                 album_ref INTEGER PRIMARY KEY,
-                spotify_album_uri TEXT NOT NULL UNIQUE,
+                spotify_album_uri TEXT NOT NULL,
                 spotify_album_name TEXT,
                 matched_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (album_ref) REFERENCES album(album_ref) ON DELETE CASCADE
@@ -200,7 +201,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
 
             CREATE TABLE IF NOT EXISTS spotify_artist (
                 artist_ref INTEGER PRIMARY KEY,
-                spotify_artist_uri TEXT NOT NULL UNIQUE,
+                spotify_artist_uri TEXT NOT NULL,
                 spotify_artist_name TEXT,
                 matched_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (artist_ref) REFERENCES artist(artist_ref) ON DELETE CASCADE
@@ -243,12 +244,21 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_play_airdate ON play(airdate);
             CREATE INDEX IF NOT EXISTS idx_play_show_id ON play(show_id);
             CREATE INDEX IF NOT EXISTS idx_play_track_ref ON play(track_ref);
-            CREATE INDEX IF NOT EXISTS idx_show_program_id ON show(program_id);
-            CREATE INDEX IF NOT EXISTS idx_show_start_time ON show(start_time);
-            CREATE INDEX IF NOT EXISTS idx_playlist_entry_playlist_id
-                ON playlist_entry(playlist_id);
             CREATE INDEX IF NOT EXISTS idx_play_type_airdate_track
                 ON play(play_type, airdate DESC, track_ref);
+
+            CREATE INDEX IF NOT EXISTS idx_show_program_id ON show(program_id);
+            CREATE INDEX IF NOT EXISTS idx_show_start_time ON show(start_time);
+
+            CREATE INDEX IF NOT EXISTS idx_playlist_entry_playlist_id
+                ON playlist_entry(playlist_id);
+
+            CREATE INDEX IF NOT EXISTS idx_spotify_track_uri
+                ON spotify_track(spotify_track_uri);
+            CREATE INDEX IF NOT EXISTS idx_spotify_album_uri
+                ON spotify_album(spotify_album_uri);
+            CREATE INDEX IF NOT EXISTS idx_spotify_artist_uri
+                ON spotify_artist(spotify_artist_uri);
             """
         )
 
@@ -986,12 +996,13 @@ def save_spotify_not_found(conn: sqlite3.Connection, track_ref: int) -> None:
         conn.execute(
             """
             INSERT INTO spotify_track (
-                track_ref, spotify_track_uri, spotify_track_name
+                track_ref, spotify_track_uri, spotify_track_name, match_tier
             )
-            VALUES (?, ?, ?)
+            VALUES (?, ?, ?, 0)
             ON CONFLICT(track_ref) DO UPDATE SET
                 spotify_track_uri = excluded.spotify_track_uri,
                 spotify_track_name = excluded.spotify_track_name,
+                match_tier = 0,
                 matched_at = datetime('now')
             WHERE spotify_track.spotify_track_uri LIKE 'NOT_FOUND:%';
             """,
@@ -1005,6 +1016,7 @@ def save_spotify_match(
     track_ref: int,
     track_uri: str,
     track_name: str,
+    match_tier: int,
     artist_ref: int,
     artist_uri: str,
     artist_name: str,
@@ -1016,24 +1028,28 @@ def save_spotify_match(
         conn.execute(
             """
             INSERT INTO spotify_track (
-                track_ref, spotify_track_uri, spotify_track_name
+                track_ref, spotify_track_uri, spotify_track_name, match_tier
             )
-            VALUES (?, ?, ?)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(track_ref) DO UPDATE SET
                 spotify_track_uri = excluded.spotify_track_uri,
                 spotify_track_name = excluded.spotify_track_name,
-                matched_at = datetime('now')
-            WHERE spotify_track.spotify_track_uri LIKE 'NOT_FOUND:%';
+                match_tier = excluded.match_tier,
+                matched_at = datetime('now');
             """,
-            (track_ref, track_uri, track_name),
+            (track_ref, track_uri, track_name, match_tier),
         )
 
         conn.execute(
             """
-            INSERT OR IGNORE INTO spotify_artist (
+            INSERT INTO spotify_artist (
                 artist_ref, spotify_artist_uri, spotify_artist_name
             )
-            VALUES (?, ?, ?);
+            VALUES (?, ?, ?)
+            ON CONFLICT(artist_ref) DO UPDATE SET
+                spotify_artist_uri = excluded.spotify_artist_uri,
+                spotify_artist_name = excluded.spotify_artist_name,
+                matched_at = datetime('now');
             """,
             (artist_ref, artist_uri, artist_name),
         )
@@ -1041,10 +1057,14 @@ def save_spotify_match(
         if album_ref is not None:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO spotify_album (
+                INSERT INTO spotify_album (
                     album_ref, spotify_album_uri, spotify_album_name
                 )
-                VALUES (?, ?, ?);
+                VALUES (?, ?, ?)
+                ON CONFLICT(album_ref) DO UPDATE SET
+                    spotify_album_uri = excluded.spotify_album_uri,
+                    spotify_album_name = excluded.spotify_album_name,
+                    matched_at = datetime('now');
                 """,
                 (album_ref, album_uri, album_name),
             )
@@ -1061,6 +1081,31 @@ def is_play_in_playlist(
         LIMIT 1;
         """,
         (playlist_id, play_id),
+    )
+    return cursor.fetchone() is not None
+
+
+def is_track_recently_in_playlist(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+    spotify_track_uri: str,
+    recent_window: int = 20,
+) -> bool:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 1
+        FROM (
+            SELECT spotify_track_uri
+            FROM playlist_entry
+            WHERE playlist_id = ?
+            ORDER BY added_at DESC, play_id DESC
+            LIMIT ?
+        )
+        WHERE spotify_track_uri = ?
+        LIMIT 1;
+        """,
+        (playlist_id, recent_window, spotify_track_uri),
     )
     return cursor.fetchone() is not None
 
