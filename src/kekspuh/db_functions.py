@@ -879,6 +879,85 @@ def get_recent_plays_for_matching(
     return plays
 
 
+def is_track_anywhere_in_playlist(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+    spotify_track_uri: str,
+) -> bool:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 1
+        FROM playlist_entry
+        WHERE playlist_id = ?
+          AND spotify_track_uri = ?
+        LIMIT 1;
+        """,
+        (playlist_id, spotify_track_uri),
+    )
+    return cursor.fetchone() is not None
+
+
+def get_matched_recent_plays_for_playlists(
+    conn: sqlite3.Connection, limit: int = 200
+) -> list[dict[str, Any]]:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            p.play_id,
+            p.airdate,
+            t.track_ref,
+            t.track_name,
+            a.artist_ref,
+            a.artist_name,
+            st.spotify_track_uri,
+            pr.name AS program_name,
+            GROUP_CONCAT(h.name, '||') AS host_names
+        FROM (
+            SELECT play_id, airdate, show_id, track_ref
+            FROM play
+            WHERE play_type = 'trackplay'
+              AND track_ref IS NOT NULL
+            ORDER BY airdate DESC
+            LIMIT ?
+        ) p
+        JOIN track t ON p.track_ref = t.track_ref
+        JOIN artist a ON t.artist_ref = a.artist_ref
+        JOIN spotify_track st ON t.track_ref = st.track_ref
+        LEFT JOIN show s ON p.show_id = s.show_id
+        LEFT JOIN program pr ON s.program_id = pr.program_id
+        LEFT JOIN show_jx_host sjh ON s.show_id = sjh.show_id
+        LEFT JOIN host h ON sjh.host_id = h.host_id
+        WHERE st.spotify_track_uri NOT LIKE 'NOT_FOUND:%'
+        GROUP BY p.play_id, p.airdate
+        ORDER BY p.airdate;
+        """,
+        (limit,),
+    )
+
+    plays: list[dict[str, Any]] = []
+    for row in cursor.fetchall():
+        raw_hosts = row[8]
+        host_list = (
+            [name for name in raw_hosts.split("||") if name] if raw_hosts else []
+        )
+        plays.append(
+            {
+                "play_id": row[0],
+                "airdate": row[1],
+                "track_ref": row[2],
+                "track_name": row[3],
+                "artist_ref": row[4],
+                "artist_name": row[5],
+                "spotify_track_uri": row[6],
+                "program_name": row[7],
+                "host_names": host_list,
+            }
+        )
+    return plays
+
+
 def get_unmatched_tracks(
     conn: sqlite3.Connection,
     limit: int = 100,
@@ -900,11 +979,12 @@ def get_unmatched_tracks(
             JOIN artist a ON t.artist_ref = a.artist_ref
             LEFT JOIN album al ON t.album_ref = al.album_ref
             WHERE st.spotify_track_uri LIKE 'NOT_FOUND:%'
-            ORDER BY st.matched_at
+            ORDER BY st.matched_at DESC
             LIMIT ?;
             """,
             (limit,),
         )
+        rows = cursor.fetchall()
     else:
         recent_window = max(limit * 25, 5000)
         cursor.execute(
@@ -939,7 +1019,6 @@ def get_unmatched_tracks(
         )
         rows = cursor.fetchall()
 
-        # Fallback to full table scan only once the most recent window is 100% matched
         if not rows:
             cursor.execute(
                 """
@@ -961,18 +1040,6 @@ def get_unmatched_tracks(
             )
             rows = cursor.fetchall()
 
-        return [
-            {
-                "track_ref": row[0],
-                "track_name": row[1],
-                "artist_ref": row[2],
-                "artist_name": row[3],
-                "album_ref": row[4],
-                "album_name": row[5],
-            }
-            for row in rows
-        ]
-
     return [
         {
             "track_ref": row[0],
@@ -982,7 +1049,7 @@ def get_unmatched_tracks(
             "album_ref": row[4],
             "album_name": row[5],
         }
-        for row in cursor.fetchall()
+        for row in rows
     ]
 
 
