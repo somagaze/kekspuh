@@ -11,18 +11,39 @@ potentially generating trivia/facts from data retrieved from the KEXP.org API. I
 development, with the goal of ingesting data and storing it in a SQLite database. Future plans include creating a simple
 streaming website to display real-time plays and trivia.
 
+### v0.3.0-alpha Changelog
+
+- Discovered that Spotify limits API calls by both rate ***and*** quota, requiring a rewrite of ingestion logic
+- Attempted to wrap httpx calls/requests (not sure exactly, still learning) to limit TCP connections while calling
+  Spotify endpoints to prevent unnecessary translations
+- Spoti-Pie (`spottuh.py`): created an API call log that tracks Spotify search and playlist edit API calls in a 24hr
+  rolling window. Purpose is to test what the API quota is, and adapt future versions from exceeding the quota
+- `cli_entry`: added options to poll remaining KEXP endpoints (`hosts`, `programs`, `timeslots`). Bifurcated previous
+  options between ingesting substantial amounts of KEXP endpoints and Spotify search and playlist edit API calls
+- `db_functions.py`:
+    - Added new functions to limit playlist edit API calls: de-duplicate playlist entries if a track is
+      recently repeated; only edit playlists with previously-matched tracks to prevent simulatneous search and playlist
+      edit calls
+    - Discovered and corrected a database integrity issue due to unique constraints in Spotify track, album, and artists
+      matches. This required dropping and re-creating Spotify tables in the database. Learned what Little Bobby Tables'
+      mom actually did to his school's database ([xkcd 327](https://xkcd.com/327/))
+- `spot_match.py`: limited "catch-up" functions (ingest historical KEXP endpoints created while not polling) to only
+  update Spotify playlists with the most-recent trackplay
+- `pyproject.toml`: bumped `pyrefly` and `ruff` versions
+
 ### Current Status
 
 - **Versioning**
-    - With a working manual process, bumped to v0.2.0.
+    - With a working manual process, bumped to v0.2.0-alpha.
+    - Began automated matching and playlist updates, bumped to v0.3.0-alpha
       <br><br>
 - **Backend**:
     - Implemented a Python-based ingestion engine that fetches data from several KEXP.org API endpoints: hosts, plays,
       programs, shows, and timeslots.
     - A manual "backfill" process progresses through the endpoints, which go back to 2001. Endstate will be a database
       of about 3.8 million trackplays.
-    - A second "forward fill" process ingests plays from the latest airdate in my database to current; matches the
-      tracks, albums, and artists with spotify URIs; and updates one or more playlists based on a few simple rules:
+    - Multiple "forward fill" processes to ingest plays from the latest airdate in database to current; match tracks,
+      albums, and artists with spotify URIs; and updates one or more playlists based on a few simple rules:
         - Eva Walker's Early Show
         - John Richards' Morning Show
         - Larry Mizell, Jr.'s Afternoon Show
@@ -58,10 +79,15 @@ streaming website to display real-time plays and trivia.
 - **No Idea if This Works**... in the long-term. After proof-of-concept, I refactored the "plays" endpoint ingestion and
   added the other endpoints; split modules into distinct functions, and pulled my hair out (what's left of it) figuring
   out the database (I needed to make mermaid flowcharts to understand it).
+- **Small Idea that It May be Working**... in the short-term.
 
 ### UNREAL Current Status
 
 - An old video game from 1998.
+
+### GoldenEye 007 Current Status
+
+- Still the best multiplayer FPS of all time
 
 ### Next Steps
 
@@ -83,23 +109,24 @@ streaming website to display real-time plays and trivia.
 - **Testing and Optimization**:
     - Implement comprehensive testing to ensure data integrity and system reliability... heh, just kidding. I have no
       idea how to test yet.
-    - Optimize database performance and API calls for efficiency, I WILL NEED TO BETTER LEARN THE SYNTAX TO YELL AT MY
-      DATABASE AND FIGURE OUT WHERE MY INEFFICIENCIES ARE;
+    - Never stop optimizing ~~Optimize~~ database performance and API calls for efficiency, I WILL CONTINUE TO LEARN
+      ~~NEED TO BETTER LEARN~~ THE SYNTAX TO YELL AT MY DATABASE AND FIGURE OUT WHERE MY INEFFICIENCIES ARE;
       <br><br>
 - ~~**Spotify Matching**:~~
     - ~~Get a Spotify matching function going to slog through millions of plays and match track, album, and artist
       Spotify URIs.~~
       <br><br>
 - **Comments**
-    - Future me is going to appreciate knowing what past me did.
+    - Future me is going to appreciate knowing what past me did (Nov 22, 2026: sorry future me, I am still
+      procrastinating)
 
 ---
 
 [KEXP 90.3 FM](https://www.kexp.org/) is a Seattle-based non-profit radio station founded by University of Washington
 students in 1972 as KCMU 90.5 FM. KEXP also broadcasts as KEXC 92.7 FM in Alameda / San Francisco, CA. About 61% of the
 station's income comes from ~36,000 worldwide donors, totaling ~$17MM in 2025. I've been donor for about 20 years, and a
-friend and I are memorialized on the station's new home in Seattle Center: a line from my favorite song, and our band
-from back in the day.
+friend and I are memorialized on the station's new home in Seattle Center: a line from my favorite song, and our band's
+name from back in the day.
 
 ---
 
