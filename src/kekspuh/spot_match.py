@@ -58,6 +58,12 @@ PLAYLIST_RULES: tuple[PlaylistRule, ...] = (
         program_name="The Morning Show",
     ),
     PlaylistRule(
+        name="The Midday Show",
+        playlist_id="4RYM5nA6cEjEYz2mVZsJV3",
+        max_tracks=200,
+        program_name="The Midday Show",
+    ),
+    PlaylistRule(
         name="The Afternoon Show",
         playlist_id="51IUW5EhqmgJFFzqZEfVs4",
         max_tracks=200,

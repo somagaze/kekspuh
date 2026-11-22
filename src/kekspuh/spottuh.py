@@ -253,10 +253,13 @@ class SpotifyClient:
             client,
             "GET",
             f"/playlists/{playlist_id}",
-            params={"fields": "tracks.total"},
+            params={"fields": "items.total"},
         )
         resp.raise_for_status()
-        return resp.json().get("tracks", {}).get("total", 0)
+        data = resp.json()
+        if isinstance(data.get("items"), dict):
+            return data["items"].get("total", 0)
+        return data.get("tracks", {}).get("total", 0)
 
     def add_track_to_top(
         self, playlist_id: str, track_uri: str, max_limit: int = 200
@@ -294,23 +297,39 @@ class SpotifyClient:
             client,
             "GET",
             f"/playlists/{playlist_id}/items",
-            params={"offset": offset, "limit": count, "fields": "items(track(uri))"},
+            params={
+                "offset": offset,
+                "limit": count,
+                "fields": "items(item(uri),track(uri))",
+            },
         )
         if resp.is_error:
+            print(
+                f"[Spotify] Failed to fetch overflow items: {resp.status_code} {resp.text}"
+            )
             return
 
         items = resp.json().get("items", [])
-        uris_to_remove = [
-            {"uri": item["track"]["uri"]} for item in items if item.get("track")
-        ]
+        uris_to_remove: list[dict[str, str]] = []
+        for entry in items:
+            media = entry.get("item") or entry.get("track")
+            if media and media.get("uri"):
+                uris_to_remove.append({"uri": media["uri"]})
 
         if uris_to_remove:
-            self._request_with_retry(
+            del_resp = self._request_with_retry(
                 client,
                 "DELETE",
                 f"/playlists/{playlist_id}/items",
-                json={"tracks": uris_to_remove},
+                json={"items": uris_to_remove},
             )
+            if del_resp.is_error:
+                print(
+                    f"[Spotify] Failed to delete overflow items: "
+                    f"{del_resp.status_code} {del_resp.text}"
+                )
+                return
+
             print(
                 f"[Spotify] Trimmed {len(uris_to_remove)} overflow "
                 "tracks from bottom of playlist."
