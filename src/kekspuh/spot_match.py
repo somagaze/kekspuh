@@ -52,6 +52,11 @@ PLAYLIST_RULES: tuple[PlaylistRule, ...] = (
         max_tracks=200,
     ),
     PlaylistRule(
+        name="Early",
+        playlist_id="3e8nuLQwxhd3JffqsIH5HB",
+        max_tracks=200,
+    ),
+    PlaylistRule(
         name="The Morning Show",
         playlist_id="0jLdBH7bUQntstL8lsaFcf",
         max_tracks=200,
