@@ -29,6 +29,7 @@ class AuthState:
     code: str | None = None
 
 
+# noinspection shadowing-builtins
 class CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
