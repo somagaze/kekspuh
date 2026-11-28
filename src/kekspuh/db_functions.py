@@ -1177,6 +1177,124 @@ def is_track_recently_in_playlist(
     return cursor.fetchone() is not None
 
 
+def get_overflow_playlist_entries(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+    max_tracks: int,
+) -> list[tuple[int, str]]:
+    """
+    Returns (play_id, spotify_track_uri) rows in playlist_entry that exceed
+    the newest <max_tracks> entries for <playlist_id>, ordered oldest first.
+    Uses local SQLite state so zero Spotify GET calls are needed for trimming.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT play_id, spotify_track_uri
+        FROM playlist_entry
+        WHERE playlist_id = ?
+        ORDER BY added_at DESC, play_id DESC
+        LIMIT -1 OFFSET ?;
+        """,
+        (playlist_id, max_tracks),
+    )
+    return [(int(row[0]), str(row[1])) for row in cursor.fetchall()]
+
+
+def delete_playlist_entries(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+    play_ids: list[int],
+) -> None:
+    """Removes trimmed play_id rows from playlist_entry for <playlist_id>."""
+    if not play_ids:
+        return
+    with conn:
+        conn.executemany(
+            """
+            DELETE FROM playlist_entry
+            WHERE playlist_id = ? AND play_id = ?;
+            """,
+            [(playlist_id, pid) for pid in play_ids],
+        )
+
+
+def get_deduplicated_master_candidates(
+    conn: sqlite3.Connection,
+    source_playlist_ids: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """
+    Builds the already-deduplicated target track list (up to <limit> unique
+    spotify_track_uris) from the active show/host playlists recorded in
+    playlist_entry, ordered by most recent play airdate DESC.
+    """
+    if not source_playlist_ids or limit <= 0:
+        return []
+
+    placeholders = ",".join("?" for _ in source_playlist_ids)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            pe.spotify_track_uri,
+            MAX(pe.play_id) AS latest_play_id,
+            MAX(p.airdate) AS latest_airdate
+        FROM playlist_entry pe
+        JOIN play p ON pe.play_id = p.play_id
+        WHERE pe.playlist_id IN ({placeholders})
+          AND pe.spotify_track_uri NOT LIKE 'NOT_FOUND:%'
+        GROUP BY pe.spotify_track_uri
+        ORDER BY latest_airdate DESC, latest_play_id DESC
+        LIMIT ?;
+        """,
+        (*source_playlist_ids, limit),
+    )
+    return [
+        {
+            "spotify_track_uri": row[0],
+            "play_id": int(row[1]),
+            "airdate": row[2],
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def get_playlist_tracked_uris(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+) -> set[str]:
+    """Returns all spotify_track_uris currently recorded in playlist_entry for <playlist_id>."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT DISTINCT spotify_track_uri
+        FROM playlist_entry
+        WHERE playlist_id = ?;
+        """,
+        (playlist_id,),
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
+
+def delete_playlist_entries_by_uris(
+    conn: sqlite3.Connection,
+    playlist_id: str,
+    track_uris: list[str],
+) -> None:
+    """Removes entries matching <track_uris> from playlist_entry for <playlist_id>."""
+    if not track_uris:
+        return
+    with conn:
+        conn.executemany(
+            """
+            DELETE FROM playlist_entry
+            WHERE playlist_id = ? AND spotify_track_uri = ?;
+            """,
+            [(playlist_id, uri) for uri in track_uris],
+        )
+
+
 def record_playlist_entry(
     conn: sqlite3.Connection,
     playlist_id: str,

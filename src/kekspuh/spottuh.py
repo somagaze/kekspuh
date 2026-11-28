@@ -17,6 +17,11 @@ BASE_URL = "https://api.spotify.com/v1"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 USAGE_LOG_PATH = PROJECT_ROOT / "data" / "spotify_usage.json"
 ROLLING_WINDOW_SECONDS = 86400
+COOLDOWN_EARLY_RESUME_SECONDS = 300
+
+
+class SpotifyCooldownError(RuntimeError):
+    """Raised when an extended Spotify 429 rate-limit cooldown is active."""
 
 
 @dataclass(frozen=True)
@@ -36,20 +41,42 @@ class SpotifyQuotaTracker:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_counts: dict[str, int] = {"search": 0, "playlist": 0, "other": 0}
 
-    def _load_events(self) -> list[dict[str, Any]]:
+    def _load_state(self) -> dict[str, Any]:
         if not self.log_path.exists():
-            return []
+            return {"events": [], "cooldown_until": 0.0}
         try:
             data = json.loads(self.log_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
-        except json.JSONDecodeError, OSError:
-            return []
+            # TODO Backward-compatible migration if file was previously a raw list: check file
+            if isinstance(data, list):
+                return {"events": data, "cooldown_until": 0.0}
+            if isinstance(data, dict):
+                return {
+                    "events": data.get("events", []),
+                    "cooldown_until": float(data.get("cooldown_until", 0.0)),
+                }
+        except json.JSONDecodeError, OSError, ValueError, TypeError:
+            pass
+        return {"events": [], "cooldown_until": 0.0}
 
-    def _save_events(self, events: list[dict[str, Any]]) -> None:
+    def _save_state(self, state: dict[str, Any]) -> None:
         try:
-            self.log_path.write_text(json.dumps(events), encoding="utf-8")
+            self.log_path.write_text(json.dumps(state), encoding="utf-8")
         except OSError:
             pass
+
+    def set_cooldown(self, retry_after_seconds: int) -> float:
+        now = time.time()
+        wait_seconds = max(60, retry_after_seconds - COOLDOWN_EARLY_RESUME_SECONDS)
+        cooldown_until = now + wait_seconds
+        state = self._load_state()
+        state["cooldown_until"] = cooldown_until
+        self._save_state(state)
+        return cooldown_until
+
+    def get_cooldown_remaining(self) -> float:
+        state = self._load_state()
+        remaining = float(state.get("cooldown_until", 0.0)) - time.time()
+        return max(0.0, remaining)
 
     def record_call(self, url: str) -> None:
         now = time.time()
@@ -64,13 +91,16 @@ class SpotifyQuotaTracker:
 
         self.session_counts[bucket] = self.session_counts.get(bucket, 0) + 1
 
-        events = [e for e in self._load_events() if e.get("ts", 0) >= cutoff]
+        state = self._load_state()
+        events = [e for e in state.get("events", []) if e.get("ts", 0) >= cutoff]
         events.append({"ts": now, "bucket": bucket})
-        self._save_events(events)
+        state["events"] = events
+        self._save_state(state)
 
     def get_24h_summary(self) -> dict[str, int]:
         cutoff = time.time() - ROLLING_WINDOW_SECONDS
-        events = [e for e in self._load_events() if e.get("ts", 0) >= cutoff]
+        state = self._load_state()
+        events = [e for e in state.get("events", []) if e.get("ts", 0) >= cutoff]
         summary = {"search": 0, "playlist": 0, "other": 0}
         for e in events:
             b = e.get("bucket", "other")
@@ -248,92 +278,74 @@ class SpotifyClient:
             match_tier=match_tier,
         )
 
-    def _get_playlist_track_count(self, client: httpx.Client, playlist_id: str) -> int:
-        resp = self._request_with_retry(
-            client,
-            "GET",
-            f"/playlists/{playlist_id}",
-            params={"fields": "items.total"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data.get("items"), dict):
-            return data["items"].get("total", 0)
-        return data.get("tracks", {}).get("total", 0)
-
-    def add_track_to_top(
-        self, playlist_id: str, track_uri: str, max_limit: int = 200
+    def add_tracks_to_playlist(
+        self,
+        playlist_id: str,
+        track_uris: list[str],
+        position: int | None = 0,
     ) -> None:
+
+        if not track_uris:
+            return
+
         client, should_close = self._get_client()
         try:
-            add_resp = self._request_with_retry(
-                client,
-                "POST",
-                f"/playlists/{playlist_id}/items",
-                json={"uris": [track_uri], "position": 0},
-            )
-            add_resp.raise_for_status()
-            print(
-                f"[Spotify] Successfully prepended {track_uri} "
-                f"to playlist {playlist_id}"
-            )
+            for start in range(0, len(track_uris), 100):
+                chunk = track_uris[start : start + 100]
+                payload: dict[str, Any] = {"uris": chunk}
+                if position is not None:
+                    payload["position"] = position + start
 
-            total_tracks = self._get_playlist_track_count(client, playlist_id)
-            if total_tracks > max_limit:
-                excess_count = total_tracks - max_limit
-                self._trim_playlist_bottom(
-                    client, playlist_id, offset=max_limit, count=excess_count
+                resp = self._request_with_retry(
+                    client,
+                    "POST",
+                    f"/playlists/{playlist_id}/items",
+                    json=payload,
                 )
-
-            time.sleep(0.5)
+                resp.raise_for_status()
+                print(
+                    f"[Spotify] Added {len(chunk)} track(s) to playlist {playlist_id}"
+                )
+                time.sleep(0.5)
         finally:
             if should_close:
                 client.close()
 
-    def _trim_playlist_bottom(
-        self, client: httpx.Client, playlist_id: str, offset: int, count: int
+    def remove_tracks_from_playlist(
+        self,
+        playlist_id: str,
+        track_uris: list[str],
     ) -> None:
-        resp = self._request_with_retry(
-            client,
-            "GET",
-            f"/playlists/{playlist_id}/items",
-            params={
-                "offset": offset,
-                "limit": count,
-                "fields": "items(item(uri),track(uri))",
-            },
-        )
-        if resp.is_error:
-            print(
-                f"[Spotify] Failed to fetch overflow items: {resp.status_code} {resp.text}"
-            )
+
+        if not track_uris:
             return
 
-        items = resp.json().get("items", [])
-        uris_to_remove: list[dict[str, str]] = []
-        for entry in items:
-            media = entry.get("item") or entry.get("track")
-            if media and media.get("uri"):
-                uris_to_remove.append({"uri": media["uri"]})
+        unique_uris = list(dict.fromkeys(track_uris))
 
-        if uris_to_remove:
-            del_resp = self._request_with_retry(
-                client,
-                "DELETE",
-                f"/playlists/{playlist_id}/items",
-                json={"items": uris_to_remove},
-            )
-            if del_resp.is_error:
-                print(
-                    f"[Spotify] Failed to delete overflow items: "
-                    f"{del_resp.status_code} {del_resp.text}"
+        client, should_close = self._get_client()
+        try:
+            for start in range(0, len(unique_uris), 100):
+                chunk = unique_uris[start : start + 100]
+                payload = {"items": [{"uri": uri} for uri in chunk]}
+                resp = self._request_with_retry(
+                    client,
+                    "DELETE",
+                    f"/playlists/{playlist_id}/items",
+                    json=payload,
                 )
-                return
-
-            print(
-                f"[Spotify] Trimmed {len(uris_to_remove)} overflow "
-                "tracks from bottom of playlist."
-            )
+                if resp.is_error:
+                    print(
+                        f"[Spotify] Failed to delete overflow items from {playlist_id}: "
+                        f"{resp.status_code} {resp.text}"
+                    )
+                    return
+                print(
+                    f"[Spotify] Trimmed {len(chunk)} track(s) from playlist {playlist_id}"
+                )
+                time.sleep(0.5)
+        finally:
+            if should_close:
+                client.close()
 
     def _request_with_retry(
         self,
@@ -344,6 +356,13 @@ class SpotifyClient:
         max_retries: int = 4,
         **kwargs: Any,
     ) -> httpx.Response:
+        cooldown_remaining = self.quota.get_cooldown_remaining()
+        if cooldown_remaining > 0:
+            mins = cooldown_remaining / 60
+            raise SpotifyCooldownError(
+                f"Spotify rate-limit cooldown active ({mins:.1f} min remaining until next check)."
+            )
+
         for attempt in range(1, max_retries + 1):
             try:
                 self.quota.record_call(url)
@@ -362,11 +381,12 @@ class SpotifyClient:
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", 5)) + 1
                 if retry_after > 120:
-                    hours = retry_after / 3600
+                    cooldown_until = self.quota.set_cooldown(retry_after)
+                    resume_in_mins = (cooldown_until - time.time()) / 60
                     self.print_quota_summary()
-                    raise RuntimeError(
-                        f"Spotify extended rate limit active (Retry-After: {retry_after}s / ~{hours:.1f}h). "
-                        "Aborting instead of sleeping."
+                    raise SpotifyCooldownError(
+                        f"Spotify extended rate limit (Retry-After: {retry_after}s). "
+                        f"Pausing Spotify calls for ~{resume_in_mins:.1f} min (5 min before expiry)."
                     )
                 print(f"[Spotify] Rate limited (429). Sleeping {retry_after}s...")
                 time.sleep(retry_after)

@@ -23,6 +23,7 @@ from kekspuh.endpoint_jobber import KexpClient
 from kekspuh.spot_match import (
     match_unmatched_tracks,
     sync_existing_matches_to_playlists,
+    sync_master_playlist,
     sync_recent_playlists,
 )
 
@@ -175,6 +176,8 @@ def _run_polling_loop(sync_spotify: bool) -> None:
       - If sync_spotify=True: matches ONLY the single most recent play & updates playlists.
       - Polls <plays> every 30s and <shows> every 300s; for each newly ingested play,
         matches & updates playlists if sync_spotify=True.
+      - Once per day at midnight pacific time, combines active playlists
+        into the deduplicated KEXP Recent playlist.
     """
     print("\n[Catch-up] Ingesting KEXP shows & plays from latest database watermark...")
     try:
@@ -209,6 +212,7 @@ def _run_polling_loop(sync_spotify: bool) -> None:
         print(
             "  - Newly ingested plays will be matched on Spotify & added to playlists"
         )
+        print("  - KEXP Recent playlist will be combined each day at midnight pacific")
     else:
         print("  - KEXP database ingestion only (no Spotify API calls)")
     print("Press Ctrl+C at any time to safely exit.\n")
@@ -218,10 +222,28 @@ def _run_polling_loop(sync_spotify: bool) -> None:
 
     last_plays_poll = time.time()
     last_shows_poll = time.time() - shows_interval + 15.0
+    last_midnight_sync_date = datetime.now(PACIFIC_TZ).date()
 
     try:
         while True:
             current_time = time.time()
+            now_pacific = datetime.now(PACIFIC_TZ)
+
+            if sync_spotify and now_pacific.date() > last_midnight_sync_date:
+                now_str = now_pacific.strftime("%H:%M:%S")
+                print(
+                    f"\n{now_str} [Midnight Sync] Combining show playlists into KEXP Recent playlist..."
+                )
+                try:
+                    sync_master_playlist()
+                    last_midnight_sync_date = now_pacific.date()
+                except (
+                    httpx.HTTPError,
+                    sqlite3.OperationalError,
+                    OSError,
+                    RuntimeError,
+                ) as err:
+                    print(f"[Midnight Sync] Error: {err}")
 
             if current_time - last_shows_poll >= shows_interval:
                 now_str = datetime.now(PACIFIC_TZ).strftime("%H:%M:%S")
@@ -295,6 +317,17 @@ def run_option_5_update_playlists_from_existing_matches() -> None:
     print(
         "\n--- Option 5: Spotify Update Playlists (Existing Matches Only, No Search Calls) ---"
     )
+    print("  [1] Update playlists from existing DB matches")
+    print("  [2] Combine playlists into KEXP Recent playlist")
+    mode = prompt_int("Select playlist update mode", 1, 2)
+
+    if mode == 2:
+        added, removed = sync_master_playlist()
+        print(
+            f"\n[Completed] KEXP Recent playlist updated (+{added} added, -{removed} removed)."
+        )
+        return
+
     lookback = prompt_int(
         "How many recent plays to scan for existing matches?", 10, 500
     )

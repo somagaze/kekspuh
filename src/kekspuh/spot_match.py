@@ -7,7 +7,12 @@ from typing import Any
 from kekspuh.db_functions import (
     NOT_FOUND_PREFIX,
     connect_db,
+    delete_playlist_entries,
+    delete_playlist_entries_by_uris,
+    get_deduplicated_master_candidates,
     get_matched_recent_plays_for_playlists,
+    get_overflow_playlist_entries,
+    get_playlist_tracked_uris,
     get_recent_plays_for_matching,
     get_unmatched_tracks,
     init_db,
@@ -19,7 +24,7 @@ from kekspuh.db_functions import (
     save_spotify_match,
     save_spotify_not_found,
 )
-from kekspuh.spottuh import SpotifyClient
+from kekspuh.spottuh import SpotifyClient, SpotifyCooldownError
 
 
 @dataclass(frozen=True)
@@ -47,14 +52,10 @@ class PlaylistRule:
 
 PLAYLIST_RULES: tuple[PlaylistRule, ...] = (
     PlaylistRule(
-        name="KEXP Rolling",
-        playlist_id="5N1q6gppmeMZxb7zhuiYhK",
-        max_tracks=200,
-    ),
-    PlaylistRule(
         name="Early",
         playlist_id="3e8nuLQwxhd3JffqsIH5HB",
         max_tracks=200,
+        program_name="Early",
     ),
     PlaylistRule(
         name="The Morning Show",
@@ -88,6 +89,39 @@ PLAYLIST_RULES: tuple[PlaylistRule, ...] = (
     ),
 )
 
+MASTER_PLAYLIST_ID = "5N1q6gppmeMZxb7zhuiYhK"
+
+
+def get_master_playlist_max_tracks(
+    rules: tuple[PlaylistRule, ...] = PLAYLIST_RULES,
+) -> int:
+    """Dynamically sums max_tracks across all configured show/host rules."""
+    return sum(rule.max_tracks for rule in rules)
+
+
+def _trim_playlist_from_db(
+    spotify: SpotifyClient,
+    playlist_id: str,
+    max_tracks: int,
+) -> None:
+    """
+    Trims excess tracks from <playlist_id> using strictly local SQLite state
+    (zero Spotify GET requests).
+    """
+    with connect_db() as conn:
+        overflow = get_overflow_playlist_entries(conn, playlist_id, max_tracks)
+
+    if not overflow:
+        return
+
+    overflow_play_ids = [pid for pid, _ in overflow]
+    overflow_uris = [uri for _, uri in overflow]
+
+    spotify.remove_tracks_from_playlist(playlist_id, overflow_uris)
+
+    with connect_db() as conn:
+        delete_playlist_entries(conn, playlist_id, overflow_play_ids)
+
 
 def sync_recent_playlists(
     recent_limit: int = 1,
@@ -107,6 +141,13 @@ def sync_recent_playlists(
     session_uri_cache: dict[int, str] = {}
 
     with SpotifyClient() as spotify:
+        if spotify.quota.get_cooldown_remaining() > 0:
+            mins = float(spotify.quota.get_cooldown_remaining() / 60)
+            print(
+                f"[Spotify] Cooldown active ({mins:.1f} min remaining). Skipping sync."
+            )
+            return 0
+
         try:
             for play in recent_plays:
                 play_id: int = play["play_id"]
@@ -180,10 +221,10 @@ def sync_recent_playlists(
                     if already_added or recently_spun:
                         continue
 
-                    spotify.add_track_to_top(
+                    spotify.add_tracks_to_playlist(
                         playlist_id=rule.playlist_id,
-                        track_uri=track_uri,
-                        max_limit=rule.max_tracks,
+                        track_uris=[track_uri],
+                        position=0,
                     )
 
                     with connect_db() as conn:
@@ -191,14 +232,101 @@ def sync_recent_playlists(
                             conn, rule.playlist_id, play_id, track_uri
                         )
 
+                    _trim_playlist_from_db(spotify, rule.playlist_id, rule.max_tracks)
+
                     additions_made += 1
                     print(
                         f"[Playlist: {rule.name}] Added '{track_name}' (play_id={play_id})"
                     )
+        except SpotifyCooldownError as err:
+            print(f"[Spotify] {err}")
         finally:
             spotify.print_quota_summary()
 
     return additions_made
+
+
+def sync_master_playlist(
+    master_playlist_id: str = MASTER_PLAYLIST_ID,
+    rules: tuple[PlaylistRule, ...] = PLAYLIST_RULES,
+) -> tuple[int, int]:
+    """
+    Runs around midnight (or manually via Option 5):
+      1. Computes max_tracks = sum(rule.max_tracks for rule in rules).
+      2. Queries SQLite for up to <max_tracks> already-deduplicated track URIs
+         across all configured show/host playlists.
+      3. Diffs against what is currently in <master_playlist_id> in playlist_entry:
+         - Batch-removes stale URIs (up to 100/request).
+         - Batch-adds new URIs (up to 100/request).
+      Returns (added_count, removed_count).
+    """
+    if not rules or not master_playlist_id:
+        print(
+            "[Master Playlist] MASTER_PLAYLIST_ID is not configured in spot_match.py."
+        )
+        return 0, 0
+
+    target_max = get_master_playlist_max_tracks(rules)
+    source_ids = tuple(rule.playlist_id for rule in rules)
+
+    with connect_db() as conn:
+        planned = get_deduplicated_master_candidates(
+            conn, source_playlist_ids=source_ids, limit=target_max
+        )
+        current_uris = get_playlist_tracked_uris(conn, master_playlist_id)
+
+    planned_by_uri = {row["spotify_track_uri"]: row["play_id"] for row in planned}
+    planned_uris = set(planned_by_uri.keys())
+
+    uris_to_add = [
+        row["spotify_track_uri"]
+        for row in planned
+        if row["spotify_track_uri"] not in current_uris
+    ]
+    uris_to_remove = [uri for uri in current_uris if uri not in planned_uris]
+
+    if not uris_to_add and not uris_to_remove:
+        print(
+            f"[Master Playlist] Already up to date ({len(current_uris)}/{target_max} unique tracks)."
+        )
+        return 0, 0
+
+    with SpotifyClient() as spotify:
+        if spotify.quota.get_cooldown_remaining() > 0:
+            mins = float(spotify.quota.get_cooldown_remaining() / 60)
+            print(
+                f"[Master Playlist] Cooldown active ({mins:.1f} min remaining). Skipping sync."
+            )
+            return 0, 0
+
+        try:
+            if uris_to_remove:
+                spotify.remove_tracks_from_playlist(master_playlist_id, uris_to_remove)
+                with connect_db() as conn:
+                    delete_playlist_entries_by_uris(
+                        conn, master_playlist_id, uris_to_remove
+                    )
+
+            if uris_to_add:
+                spotify.add_tracks_to_playlist(
+                    master_playlist_id, uris_to_add, position=0
+                )
+                with connect_db() as conn:
+                    for uri in uris_to_add:
+                        record_playlist_entry(
+                            conn, master_playlist_id, planned_by_uri[uri], uri
+                        )
+        except SpotifyCooldownError as err:
+            print(f"[Master Playlist] {err}")
+            return 0, 0
+        finally:
+            spotify.print_quota_summary()
+
+    print(
+        f"[Master Playlist] Synced ({len(planned_uris)}/{target_max} cap): "
+        f"+{len(uris_to_add)} added, -{len(uris_to_remove)} removed."
+    )
+    return len(uris_to_add), len(uris_to_remove)
 
 
 def sync_existing_matches_to_playlists(
@@ -217,43 +345,43 @@ def sync_existing_matches_to_playlists(
         print("[Playlists] No matched recent plays found in database.")
         return 0
 
+    pending_by_rule: dict[PlaylistRule, list[tuple[int, str]]] = {
+        rule: [] for rule in rules
+    }
+
+    with connect_db() as conn:
+        for play in matched_plays:
+            play_id: int = play["play_id"]
+            track_uri: str = play["spotify_track_uri"]
+            if is_not_found_uri(track_uri):
+                continue
+
+            for rule in rules:
+                if not rule.matches(play):
+                    continue
+                if is_track_anywhere_in_playlist(conn, rule.playlist_id, track_uri):
+                    continue
+                if any(uri == track_uri for _, uri in pending_by_rule[rule]):
+                    continue
+                pending_by_rule[rule].append((play_id, track_uri))
+
     with SpotifyClient() as spotify:
         try:
-            for play in matched_plays:
-                play_id: int = play["play_id"]
-                track_name: str = play["track_name"]
-                track_uri: str = play["spotify_track_uri"]
-
-                if is_not_found_uri(track_uri):
+            for rule, items in pending_by_rule.items():
+                if not items:
                     continue
+                uris = [uri for _, uri in items]
+                spotify.add_tracks_to_playlist(rule.playlist_id, uris, position=0)
 
-                for rule in rules:
-                    if not rule.matches(play):
-                        continue
+                with connect_db() as conn:
+                    for play_id, uri in items:
+                        record_playlist_entry(conn, rule.playlist_id, play_id, uri)
 
-                    with connect_db() as conn:
-                        already_in_playlist = is_track_anywhere_in_playlist(
-                            conn, rule.playlist_id, track_uri
-                        )
-
-                    if already_in_playlist:
-                        continue
-
-                    spotify.add_track_to_top(
-                        playlist_id=rule.playlist_id,
-                        track_uri=track_uri,
-                        max_limit=rule.max_tracks,
-                    )
-
-                    with connect_db() as conn:
-                        record_playlist_entry(
-                            conn, rule.playlist_id, play_id, track_uri
-                        )
-
-                    additions_made += 1
-                    print(
-                        f"[Playlist: {rule.name}] Added '{track_name}' (play_id={play_id})"
-                    )
+                _trim_playlist_from_db(spotify, rule.playlist_id, rule.max_tracks)
+                additions_made += len(items)
+                print(f"[Playlist: {rule.name}] Batch-added {len(items)} track(s).")
+        except SpotifyCooldownError as err:
+            print(f"[Spotify] {err}")
         finally:
             spotify.print_quota_summary()
 
@@ -277,6 +405,13 @@ def match_unmatched_tracks(
         return 0
 
     with SpotifyClient() as spotify:
+        if spotify.quota.get_cooldown_remaining() > 0:
+            mins = float(spotify.quota.get_cooldown_remaining() / 60)
+            print(
+                f"[Matcher] Cooldown active ({mins:.1f} min remaining). Aborting batch."
+            )
+            return 0
+
         try:
             for idx, item in enumerate(candidates, start=1):
                 track_ref: int = item["track_ref"]
@@ -316,6 +451,8 @@ def match_unmatched_tracks(
                     f"'{track_name}' -> {match.track_name} ({match.track_uri})"
                 )
                 time.sleep(0.75)
+        except SpotifyCooldownError as err:
+            print(f"[Matcher] {err}")
         finally:
             print(
                 f"[Matcher] Batch summary: {matched_count} matched, "
